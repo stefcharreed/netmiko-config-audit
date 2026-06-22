@@ -1,3 +1,4 @@
+# Built as part of a NetDevOps portfolio
 # netmiko-config-audit
 
 A Python tool that pulls running-configs from Cisco devices over SSH, version-controls them in git, and flags configuration drift against a golden baseline.
@@ -67,7 +68,7 @@ Python dependencies are in `requirements.txt`. Git is driven via the standard li
 ## Installation
 
 ```bash
-git clone git@github.com:<you>/netmiko-config-audit.git
+git clone git@github.com:kiwiDestroyer9000/netmiko-config-audit.git
 cd netmiko-config-audit
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e .          # installs deps + the `config-audit` command
