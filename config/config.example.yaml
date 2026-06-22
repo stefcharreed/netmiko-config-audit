@@ -1,0 +1,26 @@
+# Copy to config/config.yaml and edit. Commit only this sanitized example;
+# config.yaml is where your real addressing goes.
+
+settings:
+  # Where pulled running-configs are written. Point this at your SEPARATE,
+  # private backup repo — NOT inside this code repo.
+  backup_dir: "../config-backups"
+  # Golden/baseline configs (intended state).
+  golden_dir: "../config-backups/golden"
+  # Structured JSON run reports.
+  report_path: "../config-backups/reports"
+
+devices:
+  - name: edge-isr
+    host: 10.0.0.1            # placeholder — replace with your lab address
+    device_type: cisco_ios   # Netmiko driver for the ISR router
+
+  - name: core-cat
+    host: 10.0.0.2
+    device_type: cisco_ios   # Catalyst switch
+
+  - name: sg-l3
+    host: 10.0.0.3
+    device_type: cisco_s300  # SG Small Business switch (limited automation support)
+    # Optional per-device credential override; falls back to secrets.env if omitted.
+    # username: localadmin
