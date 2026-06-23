@@ -32,3 +32,7 @@ env/
 Thumbs.db
 .vscode/
 .idea/
+
+# Sanitized sample configs used as test fixtures — SAFE to commit (fake data only)
+!tests/fixtures/
+!tests/fixtures/*.cfg
