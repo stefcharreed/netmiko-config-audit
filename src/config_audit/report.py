@@ -1,13 +1,13 @@
 """Structured reporting: emit a JSON summary of a run.
 
-JSON output (not just console text) is a deliberate seam: a later AI correlation
-layer will read these reports — alongside syslog events — to produce plain-English
-summaries of what changed and why. Keep the schema stable once devices depend on it.
+JSON output is a deliberate seam: a later AI correlation layer will read these
+reports — alongside syslog events — to summarize what changed and why. Keep the
+schema stable once anything depends on it.
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,18 +23,16 @@ class RunReport:
 
 
 def build_report(results, drift_results) -> RunReport:
-    """Assemble a RunReport from collection + drift results.
+    """Assemble a RunReport from collection results + drift results."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    report = RunReport(timestamp=stamp)
 
-    Args:
-        results:       list[CollectionResult] from collector.collect_all()
-        drift_results: list[DriftResult] from drift.compare_to_golden()
-
-    TODO:
-        - Count totals / ok / failed from `results`.
-        - Populate `drifted` from drift_results where has_drift is True.
-        - Populate `failures` from any CollectionResult where ok is False.
-    """
-    raise NotImplementedError
+    report.devices_total = len(results)
+    report.devices_ok = sum(1 for r in results if r.ok)
+    report.devices_failed = sum(1 for r in results if not r.ok)
+    report.drifted = [d.device for d in drift_results if d.has_drift]
+    report.failures = {r.device: r.error for r in results if not r.ok}
+    return report
 
 
 def write_report(report: RunReport, report_dir: Path) -> Path:

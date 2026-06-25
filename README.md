@@ -1,37 +1,44 @@
-# Built as part of a NetDevOps portfolio
 # netmiko-config-audit
 
-A Python tool that pulls running-configs from Cisco devices over SSH, version-controls them in git, and flags configuration drift against a golden baseline.
+*Built as part of a NetDevOps portfolio.*
 
-> **Status:** 🚧 In active development (v0.1 scaffold). This README describes the intended design. See the [Roadmap](#roadmap) for what is implemented vs. planned.
+A Python tool that pulls running-configs from Cisco devices over SSH, version-controls them in git, and flags configuration drift against a per-device baseline.
+
+> **Status:** 🚧 In active development (v0.1). Collector, drift, and reporting are implemented; the live SSH pull awaits validation against real gear. See the [Roadmap](#roadmap).
 
 ## Overview
 
 Networks drift. Someone makes a "temporary" change at 2 a.m., a config gets fat-fingered, or a device reboots into an old startup-config — and nobody notices until something breaks. This tool gives a network its memory back:
 
-- **Knows the intended state** — golden baseline configs (version-controlled)
+- **Knows the intended state** — per-device baseline configs (version-controlled)
 - **Captures the actual state** — scheduled SSH pull of every device's running-config
-- **Explains the gap** — a line-by-line diff that flags exactly what drifted, when, and on which device
+- **Explains the gap** — a normalized, line-by-line diff that flags exactly what drifted, on which device
 
-It is designed to run unattended (cron on an always-on host) and to emit structured (JSON) output so the results can feed downstream tooling.
+It runs unattended (cron on an always-on host) and emits structured (JSON) output so the results can feed downstream tooling.
 
-> This is **Project 1** of a larger self-hosted NetDevOps platform. It is built standalone, but with deliberate seams — structured output, a git backend, and modular functions — so it can later compose with a syslog event pipeline and an AI correlation layer. See [Roadmap](#roadmap).
+> This is **Project 1** of a larger self-hosted NetDevOps platform. It is built standalone, but with deliberate seams — structured output, a git backend, modular functions — so it can later compose with a syslog event pipeline and an AI correlation layer.
 
 ## How it works
 
 ```
-inventory (config.yaml) ──> collector ──> gitstore ──> backup repo (git history = intended/actual state)
+inventory (config.yaml) ──> collector ──> gitstore ──> backup repo (git history = actual state over time)
                                   │
-                                  └──────> drift ──> report (JSON) ──> [future: AI correlation layer]
+                                  └──> drift (normalize both sides) ──> report (JSON) ──> [future: AI layer]
 ```
 
 | Module | Responsibility |
 | --- | --- |
 | `inventory.py` | Load device list + settings; merge credentials from `secrets.env` at runtime |
 | `collector.py` | Connect to each device over SSH (Netmiko), pull `show running-config` |
+| `normalize.py` | Strip volatile noise (headers, NTP clock, blank/`!` lines) from a config |
+| `drift.py`     | Diff current vs. per-device baseline, after normalizing **both** sides |
 | `gitstore.py`  | Write configs into the backup repo and commit them |
-| `drift.py`     | Diff current config vs. golden baseline; flag meaningful changes |
 | `report.py`    | Emit a structured JSON summary of the run |
+| `sanitize_check.py` | Lint a config for real IPs / hashes / SNMP strings before it's committed |
+
+### On drift detection
+
+Drift is computed against each device's **own** baseline (`baselines/<device>.cfg`) — never a single shared template. Heterogeneous gear means a shared template would flag everything as drift. `normalize()` is a pure function applied **identically to both the baseline and the current config** before diffing; normalizing only one side manufactures phantom drift, so this rule is load-bearing. It strips known-volatile lines (config header, `ntp clock-period`, blank/separator lines) but deliberately **keeps** password hashes (a changed credential is real drift) and line ordering (an ACL reorder is meaningful).
 
 ## Repo structure
 
@@ -44,17 +51,19 @@ netmiko-config-audit/
 ├── requirements.txt
 ├── secrets.env.example          # copy -> secrets.env (gitignored)
 ├── config/
-│   └── config.example.yaml      # copy -> config.yaml
+│   └── config.example.yaml      # copy -> config/config.yaml
 ├── src/config_audit/
 │   ├── __init__.py
 │   ├── cli.py                   # `config-audit backup | diff | report`
-│   ├── inventory.py             # [implemented] config + secrets loader
-│   ├── collector.py             # [skeleton]   Netmiko SSH pull  <- you build
-│   ├── gitstore.py              # [implemented] git backend
-│   ├── drift.py                 # [skeleton]   golden-baseline diff  <- you build
-│   └── report.py                # [skeleton]   JSON run report  <- you build
+│   ├── inventory.py             # config + secrets loader
+│   ├── collector.py             # Netmiko SSH pull (offline-testable via source_text)
+│   ├── normalize.py             # config normalization (pure, both-sides)
+│   ├── drift.py                 # per-device baseline diff
+│   ├── gitstore.py              # git backend
+│   ├── report.py                # JSON run report
+│   └── sanitize_check.py        # pre-commit config linter
 └── tests/
-    └── test_smoke.py
+    └── test_*.py                # fixtures pass sanitize_check before entering tests/fixtures/
 ```
 
 ## Requirements
@@ -63,7 +72,7 @@ netmiko-config-audit/
 - `git` available on PATH
 - Network reachability to the target devices over SSH
 
-Python dependencies are in `requirements.txt`. Git is driven via the standard library (`subprocess`) — no extra git dependency.
+Git is driven via the standard library (`subprocess`) — no extra git dependency.
 
 ## Installation
 
@@ -81,35 +90,51 @@ pip install -e .          # installs deps + the `config-audit` command
    cp secrets.env.example secrets.env
    cp config/config.example.yaml config/config.yaml
    ```
-2. Edit `secrets.env` with device credentials. **This file is gitignored — never commit it.**
-3. Edit `config/config.yaml` with your device addresses and the output paths. Point `backup_dir` at your **separate, private** backup repo — not inside this code repo.
+2. Edit `secrets.env` with device credentials. **Gitignored — never commit it.**
+3. Edit `config/config.yaml` with device addresses and output paths. Point `backup_dir` and `baseline_dir` at your **separate, private** backup repo — not inside this code repo.
 
 ## Usage
 
 ```bash
 config-audit backup     # pull running-configs and commit them to the backup repo
-config-audit diff       # drift check: current configs vs. golden baseline
-config-audit report     # emit a JSON summary of the latest run
+config-audit diff       # drift check: current backups vs. per-device baseline
+config-audit report     # pull, drift-check, and write a JSON run summary
 ```
 
-Run nightly via cron on the always-on host, e.g.:
+Run nightly via cron on the always-on host:
 
 ```cron
 0 2 * * *  cd /opt/netmiko-config-audit && .venv/bin/config-audit backup
 ```
 
+## Development / offline testing
+
+The collector takes an optional `source_text`, so the whole pipeline can be developed
+and unit-tested against saved configs with **no live device** — develop against a saved
+config by day, point at real gear at night:
+
+```python
+from config_audit.collector import fetch_running_config
+result = fetch_running_config(device, source_text=open("tests/fixtures/ISR1.cfg").read())
+```
+
+The `diff` command is entirely file-based and needs no device at all.
+
 ## Security
 
-- **Two repos, by design.** This *code* repo is public. The *config backups* live in a separate, private (or local-only) repo. Real running-configs contain SNMP strings, password hashes, VPN pre-shared keys, and your IP plan — they must never land in a public repo. Git history is permanent, so this separation matters from the first commit.
-- Credentials live in `secrets.env` (gitignored) and are read at runtime. The repo only ever contains `secrets.env.example` with dummy values.
-- `*.cfg` is gitignored by default so a stray local test run can't accidentally commit a real device config here.
+- **Two repos, by design.** This *code* repo is public. The *config backups* live in a separate, private repo. Real running-configs contain SNMP strings, password hashes, VPN keys, and your IP plan — they must never land in a public repo. Git history is permanent, so this separation matters from the first commit.
+- Credentials live in `secrets.env` (gitignored), read at runtime. The repo only ever contains `secrets.env.example` with dummy values.
+- `*.cfg` is gitignored so a stray local run can't commit a real config here. Sanitized test fixtures are the one exception (re-included under `tests/fixtures/`), and every fixture must pass `sanitize_check.py` first.
 
 ## Roadmap
 
 - [x] Repo scaffold, packaging, config + secrets loader, git backend
-- [ ] Netmiko collector (`collector.py`)
-- [ ] Golden-baseline drift detection (`drift.py`)
-- [ ] Structured JSON run report (`report.py`)
+- [x] Netmiko collector with offline `source_text` seam
+- [x] Per-device baseline drift detection with shared `normalize()`
+- [x] Structured JSON run report
+- [x] Pre-commit config sanitizer (`sanitize_check.py`)
+- [ ] Validate collector + normalization against physical ISR/Catalyst
+- [ ] Human-gated `promote` (approve a drift into the baseline)
 - [ ] Scheduled nightly run on the always-on host
 - [ ] **Platform stage 2:** syslog event pipeline (actual behavior)
 - [ ] **Platform stage 3:** AI correlation layer — read config diffs + logs, summarize changes and likely causes in plain English

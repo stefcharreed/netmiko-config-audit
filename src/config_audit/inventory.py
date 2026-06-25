@@ -3,10 +3,6 @@
 Device addressing and behaviour live in config.yaml (a sanitized example is
 version-controlled). Credentials live in secrets.env (gitignored) and are merged
 in at runtime, so they never touch the repo.
-
-This module is implemented as a working reference for the structured-data
-approach the rest of the tool follows. Read it, then build collector/drift/report
-in the same style.
 """
 from __future__ import annotations
 
@@ -30,8 +26,8 @@ class Device:
 
 @dataclass
 class Settings:
-    backup_dir: Path
-    golden_dir: Path
+    backup_dir: Path      # where current running-configs are written (actual state)
+    baseline_dir: Path    # per-device approved configs (intended state)
     report_path: Path
 
 
@@ -53,7 +49,7 @@ def load_config(config_path: str | Path, secrets_path: str | Path = "secrets.env
     s = raw.get("settings", {})
     settings = Settings(
         backup_dir=Path(s.get("backup_dir", "../config-backups")),
-        golden_dir=Path(s.get("golden_dir", "../config-backups/golden")),
+        baseline_dir=Path(s.get("baseline_dir", "../config-backups/baselines")),
         report_path=Path(s.get("report_path", "../config-backups/reports")),
     )
 
