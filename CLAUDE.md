@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **75 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 79 run.
+- Test: `pytest tests/ -q` — expect **76 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 80 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
