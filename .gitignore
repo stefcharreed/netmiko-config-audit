@@ -36,5 +36,8 @@ Thumbs.db
 # Sanitized sample configs used as test fixtures — SAFE to commit (fake data only)
 !tests/fixtures/
 !tests/fixtures/*.cfg
+
+#Claude
+CLAUDE.md
 CLAUDE.local.md
 .claude/settings.local.json
