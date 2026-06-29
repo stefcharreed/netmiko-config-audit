@@ -9,6 +9,9 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Cap every git subprocess so a hung git can never hang the tool.
+_GIT_TIMEOUT = 30  # seconds
+
 
 def write_config(backup_dir: Path, device_name: str, config_text: str) -> Path:
     """Write a device's running-config to backup_dir/<device>.cfg and return the path.
@@ -31,12 +34,12 @@ def commit_changes(repo_dir: Path, message: str | None = None) -> bool:
     """
     subprocess.run(
         ["git", "-C", str(repo_dir), "rev-parse", "--is-inside-work-tree"],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
     )
-    subprocess.run(["git", "-C", str(repo_dir), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(repo_dir), "add", "-A"], check=True, timeout=_GIT_TIMEOUT)
 
     # Anything staged? `git diff --cached --quiet` exits 0 = no changes, 1 = changes.
-    staged = subprocess.run(["git", "-C", str(repo_dir), "diff", "--cached", "--quiet"])
+    staged = subprocess.run(["git", "-C", str(repo_dir), "diff", "--cached", "--quiet"], timeout=_GIT_TIMEOUT)
     if staged.returncode == 0:
         return False   # nothing to commit
 
@@ -44,6 +47,6 @@ def commit_changes(repo_dir: Path, message: str | None = None) -> bool:
     message = message or f"Config backup — {stamp}"
     subprocess.run(
         ["git", "-C", str(repo_dir), "commit", "-m", message],
-        check=True, capture_output=True, text=True,
+        check=True, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
     )
     return True

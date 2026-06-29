@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "config-audit"
-version = "0.1.0"
+version = "1.1.0"
 description = "Pull, version-control, and drift-check Cisco running-configs."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,8 +14,32 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+# The MCP adapter (src/config_audit_mcp) only needs the SDK when you actually run
+# the server. Pinned below v2 — the official SDK's v2 ships breaking changes
+# (stable 2026-07-27). Install with:  pip install -e ".[mcp]"
+mcp = [
+    "mcp>=1.27,<2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# pycodestyle errors/warnings, pyflakes, isort, pyupgrade, flake8-bugbear.
+select = ["E", "W", "F", "I", "UP", "B"]
+
 [project.scripts]
 config-audit = "config_audit.cli:main"
+config-audit-mcp = "config_audit_mcp.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

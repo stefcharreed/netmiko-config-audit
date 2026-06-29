@@ -22,6 +22,11 @@ DOC_NETWORKS = [
     ipaddress.ip_network("203.0.113.0/24"),
 ]
 
+# RFC 6890 "this network." Wildcard masks (0.0.0.255, 0.0.255.255, ...) parse as
+# addresses in this block; Python 3.12's ipaddress flags them is_private. They are
+# masks, not hosts, and nothing routable lives here — so skip the whole /8.
+_THIS_NETWORK = ipaddress.ip_network("0.0.0.0/8")
+
 # Anything shaped like an IPv4 address: four dot-separated groups of 1–3 digits.
 IPV4_PATTERN = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
@@ -56,6 +61,8 @@ def _check_real_ips(line: str) -> list[dict]:
             continue
         if candidate.startswith("255."):       # subnet masks: 255.255.255.0, etc.
             continue
+        if ip in _THIS_NETWORK:                 # 0.0.0.0/8: wildcard masks (0.0.0.255)
+            continue                            # live here — "this network", never a real host
         if any(ip in net for net in DOC_NETWORKS):  # already a doc IP — safe
             continue
 

@@ -54,7 +54,14 @@ def load_config(config_path: str | Path, secrets_path: str | Path = "secrets.env
     )
 
     devices: list[Device] = []
-    for d in raw.get("devices", []):
+    for i, d in enumerate(raw.get("devices", [])):
+        for required in ("name", "host", "device_type"):
+            if required not in d:
+                label = d.get("name", f"#{i + 1}")
+                raise ValueError(
+                    f"device {label} in {config_path} is missing required field "
+                    f"'{required}'"
+                )
         devices.append(
             Device(
                 name=d["name"],
