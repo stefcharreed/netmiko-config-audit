@@ -34,8 +34,9 @@ def fetch_running_config(device: Device, source_text: str | None = None) -> Coll
         )
 
     # --- LIVE PATH ---------------------------------------------------------
-    # netmiko is lazy-imported so this module loads/tests without it installed.
-    # NOTE: retype these five lines from memory once — Netmiko muscle memory.
+    # netmiko is imported lazily, inside the function, on purpose: it keeps this
+    # module importable (and the offline path unit-testable) in environments
+    # where netmiko isn't installed, e.g. CI that only exercises source_text.
     from netmiko import ConnectHandler
 
     params = {
@@ -54,6 +55,10 @@ def fetch_running_config(device: Device, source_text: str | None = None) -> Coll
             device=device.name, ok=True, config_text=config.replace("\r\n", "\n")
         )
     except Exception as exc:
+        # Deliberately broad: one unreachable or misbehaving device must not abort
+        # the whole run, and its failure is captured as data (ok=False, error=...)
+        # for the report. Catching netmiko's specific exception types would require
+        # importing them at module top, which would defeat the lazy-import above.
         return CollectionResult(device=device.name, ok=False, error=str(exc))
 
 

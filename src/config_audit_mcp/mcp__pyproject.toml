@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "config-audit-mcp"
+version = "0.1.0"
+description = "MCP server exposing netmiko-config-audit drift/promote tools to an LLM."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # Pin below v2: the official SDK's v2 goes stable 2026-07-27 with breaking
+    # changes. Stay on the 1.x line until you deliberately migrate.
+    "mcp>=1.27,<2",
+    # NOTE: this server also requires Project 1 (the `config-audit` package) to be
+    # importable. It is intentionally NOT listed here because it isn't on PyPI —
+    # install it alongside this server (`pip install -e ../../`). If you later
+    # publish it or fold this server into that repo, declare the dependency then.
+]
+
+[project.scripts]
+config-audit-mcp = "config_audit_mcp.server:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

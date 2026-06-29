@@ -3,6 +3,7 @@
     backup   Pull running-configs from all devices and commit them to git.
     diff     Compare current backups against the per-device baseline (drift check).
     report   Pull, drift-check, and emit a structured JSON summary of the run.
+    promote  Bless a device's current backup as its new baseline (human-gated).
 """
 from __future__ import annotations
 
@@ -64,6 +65,50 @@ def _cmd_report(cfg) -> int:
     return 0
 
 
+def _cmd_promote(cfg, device_name: str) -> int:
+    """Human-gated: promote a device's current backup to its baseline (D6).
+
+    Shows the delta, requires an explicit y/N, then (on yes) overwrites the
+    device's baseline and git-commits it. Deterministic, no AI, no device write.
+    """
+    from . import promote, gitstore
+
+    plan = promote.plan_promotion(
+        device_name, cfg.settings.backup_dir, cfg.settings.baseline_dir
+    )
+
+    if not plan.backup_exists:
+        backup_path = cfg.settings.backup_dir / f"{device_name}.cfg"
+        print(f"no backup found for {device_name} at {backup_path}")
+        print("run `config-audit backup` first.")
+        return 2
+
+    if plan.is_initial:
+        print(f"{device_name}: no baseline yet — this establishes the initial baseline.")
+    elif not plan.has_drift:
+        print(f"{device_name}: already in sync with baseline — nothing to promote.")
+        return 0
+    else:
+        print(f"{device_name}: drift vs current baseline —")
+
+    for line in plan.diff_lines:
+        print("   " + line)
+
+    verb = "Establish initial baseline" if plan.is_initial else "Promote this into the baseline"
+    resp = input(f"\n{verb} for {device_name}? [y/N] ").strip().lower()
+    if resp not in ("y", "yes"):
+        print("aborted — baseline unchanged.")
+        return 1
+
+    path = promote.apply_promotion(device_name, plan.current_text, cfg.settings.baseline_dir)
+    committed = gitstore.commit_changes(
+        cfg.settings.baseline_dir, message=f"Promote baseline — {device_name}"
+    )
+    print(f"baseline updated: {path}")
+    print("committed" if committed else "written (git reported no change)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="config-audit",
@@ -77,9 +122,16 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("backup", help="Pull running-configs and commit to git.")
     sub.add_parser("diff", help="Drift check: backups vs. per-device baseline.")
     sub.add_parser("report", help="Emit a JSON summary of the latest run.")
+    p_promote = sub.add_parser(
+        "promote", help="Promote a device's current backup to its baseline (human-gated)."
+    )
+    p_promote.add_argument("device", help="Device name (must match a name in config.yaml).")
 
     args = parser.parse_args(argv)
     cfg = load_config(args.config)
+
+    if args.command == "promote":
+        return _cmd_promote(cfg, args.device)
 
     dispatch = {"backup": _cmd_backup, "diff": _cmd_diff, "report": _cmd_report}
     return dispatch[args.command](cfg)

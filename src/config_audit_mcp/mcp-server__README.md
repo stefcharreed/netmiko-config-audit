@@ -15,17 +15,17 @@ so an assistant can answer questions like *"did anything change on CORE1?"* or
 
 ## Design
 
-Three files, one boundary:
+Two files, one boundary:
 
 | File | Role |
 | --- | --- |
-| `src/config_audit_mcp/tools.py` | **Logic.** Pure functions that call Project 1 and return dicts/lists. No MCP types. |
-| `src/config_audit_mcp/registry.py` | **Surface.** One declarative list of the tools the server exposes (name, handler, description, mutating/needs-gear). Single source of truth. |
-| `src/config_audit_mcp/server.py` | **SDK glue only.** Loops the registry and registers each entry with FastMCP, then starts the transport. |
+| `src/config_audit_mcp/tools.py` | **All logic.** Pure functions that call Project 1 and return dicts/lists. No MCP types. Unit-tested with no SDK installed. |
+| `src/config_audit_mcp/server.py` | **SDK glue only.** Registers the `tools.py` functions as MCP tools and starts the transport. |
 
-The registry exists so "what can this server do?" is answerable as data — which means the
-surface is testable without standing up the SDK, and adding a tool can't silently skip
-registration (server.py and the tests both read the one list).
+Keeping the SDK boundary that thin is deliberate: the MCP SDK is moving fast
+(the official `mcp` package ships a breaking v2 in mid-2026), so the value —
+the wrapping logic — stays in a file that doesn't depend on the SDK at all, and
+the part that *does* is a dozen one-line registrations.
 
 ## Tool surface
 
@@ -49,18 +49,17 @@ an unvalidated SSH path into an agent tool is exactly the wrong order.
 
 - Python 3.10+
 - The official MCP SDK, pinned below v2: `mcp>=1.27,<2`
-- Lives in the same package as Project 1 (`config_audit`), so it imports it directly — no cross-repo install.
+- Project 1 (`config-audit`) importable — install it editable alongside this.
 
 ## Install & run
 
 ```bash
-# from the repo root — the MCP adapter ships in this same package:
-pip install -e ".[mcp,dev]"       # config_audit + config_audit_mcp + SDK + pytest
+# from a venv that also has Project 1 installed editable:
+pip install -e ../../              # Project 1 (config-audit)
+pip install -e ".[dev]"            # this server + pytest
 
 # point the server at your config.yaml and run over stdio (local clients):
 CONFIG_AUDIT_CONFIG=/path/to/config/config.yaml python -m config_audit_mcp.server
-# or via the console script:
-CONFIG_AUDIT_CONFIG=/path/to/config/config.yaml config-audit-mcp
 ```
 
 To register with a local MCP client (e.g. Claude Desktop), add a server entry that
@@ -69,24 +68,15 @@ with streamable-HTTP transport instead of stdio.
 
 ## Tests
 
-Four layers, 29 tests:
-
 ```bash
-pip install -e ".[mcp,dev]"
+pip install -e ".[dev]"
 pytest tests/ -q
 ```
 
-| File | Layer | What it proves | Needs SDK? |
-| --- | --- | --- | --- |
-| `test_tools.py` | unit | each wrapper reshapes Project 1's output correctly | no |
-| `test_registry.py` | surface | the exposed tool set + safety classification stay correct | no |
-| `test_capabilities.py` | acceptance | what an agent can *accomplish* end-to-end (drift Q&A, network-wide snapshot, the safety gate, the full promote-and-verify loop, unknown-device handling, initial baseline) | no |
-| `test_server.py` | wiring | FastMCP actually registers the registry's tools, and the internal `config_path` never leaks into the LLM-facing schema | **yes** |
-
-The first three run anywhere (no SDK, no gear) and cover the surface and behavior fully.
-`test_server.py` validates the real SDK integration and so `importorskip`s the `mcp`
-package — it runs where the SDK is installed and skips cleanly where it isn't, the same
-way Project 1 validates its live device path against real gear rather than a mock.
+The suite proves the wrapping is correct — credentials excluded from `list_devices`,
+drift reshaped into added/removed, unknown devices flagged, and `promote_baseline`
+refusing to write without `confirm=True`. Drift *detection* itself is covered by
+Project 1's own suite; this layer only tests the reshaping.
 
 ## Status
 

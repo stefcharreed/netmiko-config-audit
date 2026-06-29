@@ -36,9 +36,13 @@ def build_report(results, drift_results) -> RunReport:
 
 
 def write_report(report: RunReport, report_dir: Path) -> Path:
-    """Write the report to report_dir/run-<timestamp>.json and return the path."""
+    """Write the report to report_dir/run-<timestamp>.json and return the path.
+
+    The filename reuses report.timestamp so the file name always matches the
+    timestamp recorded inside the report (rather than a second, slightly-later
+    clock read).
+    """
     report_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    path = report_dir / f"run-{stamp}.json"
+    path = report_dir / f"run-{report.timestamp}.json"
     path.write_text(json.dumps(asdict(report), indent=2))
     return path
