@@ -18,7 +18,7 @@ Networks drift. Someone makes a "temporary" change at 2 a.m., a config gets fat-
 
 It runs unattended (cron on an always-on host) and emits structured (JSON) output so the results can feed downstream tooling.
 
-> This is **Project 1** of a larger self-hosted NetDevOps platform. It is built standalone, but with deliberate seams — structured output, a git backend, modular functions — so it can later compose with a syslog event pipeline and an AI correlation layer.
+> This is **Project 1** of a larger self-hosted NetDevOps platform. It is built standalone, but with deliberate seams — structured output, a git backend, modular functions, and an MCP adapter — so it can later compose with a syslog event pipeline (stage 2) and an AI correlation layer (stage 3, in progress in a private repo — [message me on LinkedIn](https://www.linkedin.com/in/stefan-c-reed/) if you want to know more).
 
 ## How it works
 
@@ -185,8 +185,8 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] 76-test suite: 51 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer) + 25 MCP adapter tests
 - [ ] Validate collector + normalization against physical ISR/Catalyst *(the one open item before production-ready)*
 - [ ] Scheduled nightly run on the always-on host
-- [ ] **Platform stage 2:** syslog event pipeline (actual behavior)
-- [ ] **Platform stage 3:** AI correlation layer — read config diffs + logs, summarize changes and likely causes in plain English
+- [ ] **Platform stage 2:** syslog event pipeline (actual behavior) — not started, no repo yet
+- [ ] **Platform stage 3:** AI correlation layer — composes this tool's MCP server with a CCNP-grounded knowledge base to diagnose real network problems end-to-end. In progress in a private repo, not described here to avoid two copies of the same plan drifting out of sync — [message me on LinkedIn](https://www.linkedin.com/in/stefan-c-reed/) if you want to know more.
 
 ## License
 
