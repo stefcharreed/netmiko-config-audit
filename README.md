@@ -6,7 +6,7 @@ A Python tool that pulls running-configs from Cisco devices over SSH, version-co
 
 > [![tests](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml)
 
-> **Status:** 🚧 v1.1 — feature-complete and tested offline. The full pipeline (collect → normalize → drift → promote → report) is implemented and covered by a 105-test suite that passes against sanitized fixtures (plus 4 SDK-gated MCP wiring tests that run when the mcp package is installed). The **one** remaining step before I call it production-ready is validating the live SSH pull and normalization against physical ISR/Catalyst gear — see the [Roadmap](#roadmap). I'm foregrounding that gap on purpose: a drift tool's whole credibility is that it doesn't cry drift when nothing changed, and that can only be proven against real hardware.
+> **Status:** ✅ v1.1 — feature-complete and validated against real hardware. The full pipeline (collect → normalize → drift → promote → report) is covered by a 105-test suite against sanitized fixtures (plus 4 SDK-gated MCP wiring tests), and has now also been run end-to-end against a physical Cisco device: live SSH pull, an initial baseline established via `promote`, a real config change correctly detected as drift (not phantom drift from formatting noise), and a clean `diff` afterward. See the [Roadmap](#roadmap).
 
 ## Overview
 
@@ -268,7 +268,7 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] 105-test suite: 80 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression) + 25 MCP adapter tests
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
-- [ ] Validate collector + normalization against physical ISR/Catalyst *(the one open item before production-ready)*
+- [x] Validated collector + normalization against physical Cisco gear — live SSH pull, initial baseline via `promote`, real drift correctly detected, clean `diff` after
 - [ ] Scheduled nightly run on the always-on host
 - [ ] **Platform stage 2:** syslog event pipeline (actual behavior) — not started, no repo yet
 - [ ] **Platform stage 3:** AI correlation layer — composes this tool's MCP server with a CCNP-grounded knowledge base to diagnose real network problems end-to-end. In progress in a private repo, not described here to avoid two copies of the same plan drifting out of sync — [message me on LinkedIn](https://www.linkedin.com/in/stefan-c-reed/) if you want to know more.

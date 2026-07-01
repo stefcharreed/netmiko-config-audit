@@ -151,9 +151,15 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   hashes. Run `python -m config_audit.sanitize_check <file>` before any `.cfg` enters
   `tests/fixtures/`.
 - **Device baselines/snapshots live in a separate private repo**, never here.
-- The live `fetch_running_config` Netmiko body is validated against physical gear, not
-  fixtures — don't claim it's "tested" without a hardware run. The owner retypes this
-  body himself for muscle memory; **do not rewrite it wholesale.**
+- The live `fetch_running_config` Netmiko body has now been validated against
+  physical Cisco gear (live SSH pull, initial baseline via `promote`, real drift
+  correctly detected, clean `diff` after) — not just fixtures. The owner retypes
+  this body himself for muscle memory; **do not rewrite it wholesale.** If you
+  touch it again, re-validate against real hardware before claiming it still
+  works — fixtures alone proved wrong assumptions multiple times this project
+  (the `golden_dir`/`baseline_dir` mismatch, the git commit-scoping bug, the
+  no-baseline-vs-drift confusion) precisely because they can't exercise things
+  fixtures don't model.
 - **The Docker image needs `git` on PATH** (base stage installs it via apt) — `gitstore.py`
   shells out to `git` for every commit, so a base image without it builds fine but fails
   the moment `backup`/`promote` actually runs. This bit us once already; if the base image
