@@ -6,7 +6,7 @@ A Python tool that pulls running-configs from Cisco devices over SSH, version-co
 
 > [![tests](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml)
 
-> **Status:** ✅ v1.1 — feature-complete and validated against real hardware. The full pipeline (collect → normalize → drift → promote → report) is covered by a 105-test suite against sanitized fixtures (plus 4 SDK-gated MCP wiring tests), and has now also been run end-to-end against a physical Cisco device: live SSH pull, an initial baseline established via `promote`, a real config change correctly detected as drift (not phantom drift from formatting noise), and a clean `diff` afterward. See the [Roadmap](#roadmap).
+> **Status:** ✅ v1.1 — feature-complete and validated against real hardware. The full pipeline (collect → normalize → drift → promote → report) is covered by a 108-test suite against sanitized fixtures (plus 4 SDK-gated MCP wiring tests), and has now also been run end-to-end against a physical Cisco device: live SSH pull, an initial baseline established via `promote`, a real config change correctly detected as drift (not phantom drift from formatting noise), and a clean `diff` afterward. See the [Roadmap](#roadmap).
 
 ## Overview
 
@@ -79,9 +79,9 @@ netmiko-config-audit/
 │   ├── server.py                # FastMCP glue (thin — registers the registry)
 │   ├── tools.py                 # pure tool logic; no MCP types; tested without SDK
 │   └── README.md                # MCP tool surface + install/run instructions
-└── tests/                       # 105 tests (pytest); no live gear, no network
+└── tests/                       # 108 tests (pytest); no live gear, no network
     ├── test_*.py                # Project 1 — 80 tests
-    ├── test_mcp_*.py            # MCP adapter — 25 offline + 4 SDK-gated
+    ├── test_mcp_*.py            # MCP adapter — 28 offline + 4 SDK-gated
     └── fixtures/                # sanitized configs (RFC 5737 IPs, fake hosts, zero creds)
 ```
 
@@ -189,7 +189,7 @@ The `diff` command is entirely file-based and needs no device at all.
 
 ## Testing
 
-105 tests cover the offline pipeline end to end (80 for the tool, 25 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
+108 tests cover the offline pipeline end to end (80 for the tool, 28 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
 
 ```bash
 pip install -e ".[dev]"          # tool + tests
@@ -214,7 +214,7 @@ drops root, running as a dedicated `appuser`.
 
 ```bash
 docker build -t netmiko-audit .                        # runtime image (default target)
-docker build --target test -t netmiko-audit:test .     # runs the 105-test suite inside the image; build fails on any failure
+docker build --target test -t netmiko-audit:test .     # runs the 108-test suite inside the image; build fails on any failure
 ```
 
 `config.yaml`, `secrets.env`, and the backup/baseline directories are gitignored and
@@ -245,10 +245,11 @@ across Python 3.10–3.12.
 ## MCP server (optional)
 
 This repo also ships an MCP adapter at `src/config_audit_mcp/` that exposes the
-drift/promote tools to an LLM, so an assistant can answer "did anything change on
-CORE1?" by calling real tools. It's a subpackage, not a separate repo — it imports
-`config_audit` directly. The MCP SDK is an optional dependency, pulled only when you
-run the server:
+drift/promote/backup tools to an LLM, so an assistant can answer "did anything change
+on CORE1?" by calling real tools — including pulling a fresh backup over live SSH
+(`backup_now`, registered now that this tool's hardware validation is done). It's a
+subpackage, not a separate repo — it imports `config_audit` directly. The MCP SDK is
+an optional dependency, pulled only when you run the server:
 
 ```bash
 pip install -e ".[mcp]"
@@ -265,7 +266,7 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Structured JSON run report
 - [x] Pre-commit config sanitizer (`sanitize_check.py`)
 - [x] Human-gated `promote` (approve a drift into the baseline)
-- [x] 105-test suite: 80 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression) + 25 MCP adapter tests
+- [x] 108-test suite: 80 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression) + 28 MCP adapter tests (list_devices, get_drift, get_drift_all, plan_promotion, get_config, promote_baseline, backup_now)
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [x] Validated collector + normalization against physical Cisco gear — live SSH pull, initial baseline via `promote`, real drift correctly detected, clean `diff` after

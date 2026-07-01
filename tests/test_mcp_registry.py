@@ -9,8 +9,8 @@ def test_exposes_exactly_the_expected_tools():
     """The registry exposes the agreed capability set — no more, no fewer."""
     names = {s.name for s in registry.REGISTRY}
     assert names == {
-        "list_devices", "get_drift", "get_drift_all",
-        "plan_promotion", "get_config", "promote_baseline",
+        "list_devices", "get_drift", "get_drift_all", "plan_promotion",
+        "get_config", "promote_baseline", "backup_now",
     }
 
 
@@ -26,16 +26,18 @@ def test_every_tool_has_a_nonempty_description():
         assert s.description and s.description.strip(), f"{s.name} has no description"
 
 
-def test_only_promote_baseline_is_mutating():
-    """Exactly one tool writes state; everything else must be read-only."""
+def test_only_promote_baseline_and_backup_now_are_mutating():
+    """Exactly two tools write state; everything else must be read-only."""
     mutating = {s.name for s in registry.REGISTRY if s.mutating}
-    assert mutating == {"promote_baseline"}
+    assert mutating == {"promote_baseline", "backup_now"}
 
 
-def test_no_tool_needs_gear_yet():
-    """backup_now (live SSH) is deferred until P1 hardware validation, so nothing
-    in the current surface should require gear."""
-    assert not any(s.needs_gear for s in registry.REGISTRY)
+def test_only_backup_now_needs_gear():
+    """backup_now (live SSH) is the one tool needing real hardware -- registered
+    now that Project 1's hardware validation is done. Everything else is
+    file-based and needs no device."""
+    needs_gear = {s.name for s in registry.REGISTRY if s.needs_gear}
+    assert needs_gear == {"backup_now"}
 
 
 def test_all_handlers_are_callable():
