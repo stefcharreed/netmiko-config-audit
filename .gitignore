@@ -10,6 +10,9 @@ configs/
 golden/
 *.cfg
 
+# Real device inventory (real IPs/hostnames) — only the sanitized example is public
+config/config.yaml
+
 # Tool output
 reports/
 
