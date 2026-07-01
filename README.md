@@ -50,6 +50,8 @@ netmiko-config-audit/
 ├── README.md
 ├── LICENSE
 ├── .gitignore
+├── Dockerfile                    # multi-stage: test (runs the suite) + runtime (non-root)
+├── .dockerignore
 ├── pyproject.toml
 ├── requirements.txt
 ├── secrets.env.example          # copy -> secrets.env (gitignored)
@@ -82,6 +84,7 @@ netmiko-config-audit/
 - Python 3.10+
 - `git` available on PATH
 - Network reachability to the target devices over SSH
+- Docker (optional — see [Docker](#docker) below; not required to run natively)
 
 Git is driven via the standard library (`subprocess`) — no extra git dependency.
 
@@ -153,6 +156,36 @@ What the suite actually proves, rather than just exercising lines:
 
 All fixtures are sanitized — RFC 5737 documentation IPs, fake hostnames, zero credentials — and every one must pass `sanitize_check.py` before it's allowed into `tests/fixtures/`.
 
+## Docker
+
+A multi-stage `Dockerfile` packages the CLI for containerized runs. `git` is installed
+in the image (`gitstore.py` shells out to it for every commit), and the runtime stage
+drops root, running as a dedicated `appuser`.
+
+```bash
+docker build -t netmiko-audit .                        # runtime image (default target)
+docker build --target test -t netmiko-audit:test .     # runs the 76-test suite inside the image; build fails on any failure
+```
+
+`config.yaml`, `secrets.env`, and the backup/baseline directories are gitignored and
+external to this repo **by design** (see [Security](#security) below) — mount them in
+at run time, never bake them into the image:
+
+```bash
+docker run --rm \
+  -v $(pwd)/config/config.yaml:/app/config/config.yaml:ro \
+  -v $(pwd)/secrets.env:/app/secrets.env:ro \
+  -v /path/to/private-backup-repo:/path/to/private-backup-repo \
+  netmiko-audit -c config/config.yaml diff
+```
+
+The third mount's host and container paths should match whatever `backup_dir` /
+`baseline_dir` point to in `config.yaml` — those paths are read as-given, not remapped.
+
+CI builds and tests the image on every push/PR (the `docker` job in
+[`tests.yml`](.github/workflows/tests.yml)), in addition to the host-based test matrix
+across Python 3.10–3.12.
+
 ## Security
 
 - **Two repos, by design.** This *code* repo is public. The *config backups* live in a separate, private repo. Real running-configs contain SNMP strings, password hashes, VPN keys, and your IP plan — they must never land in a public repo. Git history is permanent, so this separation matters from the first commit.
@@ -183,6 +216,7 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Pre-commit config sanitizer (`sanitize_check.py`)
 - [x] Human-gated `promote` (approve a drift into the baseline)
 - [x] 76-test suite: 51 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer) + 25 MCP adapter tests
+- [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [ ] Validate collector + normalization against physical ISR/Catalyst *(the one open item before production-ready)*
 - [ ] Scheduled nightly run on the always-on host
 - [ ] **Platform stage 2:** syslog event pipeline (actual behavior) — not started, no repo yet
