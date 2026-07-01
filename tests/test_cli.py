@@ -93,7 +93,8 @@ def test_ensure_secrets_file_prompts_and_writes_when_missing(tmp_path, monkeypat
 
     secrets_path = tmp_path / "secrets.env"
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: "admin")
-    passwords = iter(["hunter2", ""])  # password, then skip enable secret
+    # password, confirm password, then skip enable secret (empty = no confirm prompt)
+    passwords = iter(["hunter2", "hunter2", ""])
     monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(passwords))
 
     _ensure_secrets_file(secrets_path)
@@ -106,13 +107,49 @@ def test_ensure_secrets_file_prompts_and_writes_when_missing(tmp_path, monkeypat
 
 
 def test_ensure_secrets_file_includes_secret_when_provided(tmp_path, monkeypatch):
-    """The enable/secret line is written when the user provides one."""
+    """The enable/secret line is written when the user provides one, confirmed."""
     from config_audit.cli import _ensure_secrets_file
 
     secrets_path = tmp_path / "secrets.env"
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: "admin")
-    passwords = iter(["hunter2", "enable123"])
+    passwords = iter(["hunter2", "hunter2", "enable123", "enable123"])
     monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(passwords))
 
     _ensure_secrets_file(secrets_path)
     assert "NET_SECRET=enable123" in secrets_path.read_text(encoding="utf-8")
+
+
+def test_password_mismatch_retries_then_succeeds(monkeypatch, capsys):
+    """A mismatched confirmation re-prompts instead of silently accepting either value."""
+    from config_audit.cli import _prompt_confirmed_password
+
+    # first pair mismatches, second pair matches
+    responses = iter(["typo1", "typo2", "correct", "correct"])
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(responses))
+
+    result = _prompt_confirmed_password("Default password")
+
+    assert result == "correct"
+    assert "Didn't match" in capsys.readouterr().out
+
+
+def test_password_mismatch_exhausts_attempts_and_exits(monkeypatch):
+    """Repeated mismatches abort setup instead of looping forever."""
+    from config_audit.cli import _prompt_confirmed_password
+
+    responses = iter(["a", "b", "c", "d", "e", "f"])  # 3 mismatched pairs
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(responses))
+
+    with pytest.raises(SystemExit) as exit_info:
+        _prompt_confirmed_password("Default password")
+    assert exit_info.value.code == 1
+
+
+def test_optional_password_confirmation_skipped_when_blank(monkeypatch):
+    """An empty optional value (e.g. skipping the enable secret) needs no confirmation."""
+    from config_audit.cli import _prompt_confirmed_password
+
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: "")
+
+    result = _prompt_confirmed_password("Enable secret", optional=True)
+    assert result == ""
