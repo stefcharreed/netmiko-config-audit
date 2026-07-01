@@ -6,7 +6,7 @@ A Python tool that pulls running-configs from Cisco devices over SSH, version-co
 
 > [![tests](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml)
 
-> **Status:** 🚧 v1.1 — feature-complete and tested offline. The full pipeline (collect → normalize → drift → promote → report) is implemented and covered by a 100-test suite that passes against sanitized fixtures (plus 4 SDK-gated MCP wiring tests that run when the mcp package is installed). The **one** remaining step before I call it production-ready is validating the live SSH pull and normalization against physical ISR/Catalyst gear — see the [Roadmap](#roadmap). I'm foregrounding that gap on purpose: a drift tool's whole credibility is that it doesn't cry drift when nothing changed, and that can only be proven against real hardware.
+> **Status:** 🚧 v1.1 — feature-complete and tested offline. The full pipeline (collect → normalize → drift → promote → report) is implemented and covered by a 105-test suite that passes against sanitized fixtures (plus 4 SDK-gated MCP wiring tests that run when the mcp package is installed). The **one** remaining step before I call it production-ready is validating the live SSH pull and normalization against physical ISR/Catalyst gear — see the [Roadmap](#roadmap). I'm foregrounding that gap on purpose: a drift tool's whole credibility is that it doesn't cry drift when nothing changed, and that can only be proven against real hardware.
 
 ## Overview
 
@@ -47,6 +47,8 @@ Drift is computed against each device's **own** baseline (`baselines/<device>.cf
 
 There's no database or timestamped-file scheme here — **git itself is the version history.** `gitstore.write_config()` writes one file per device (`<device>.cfg`), overwritten every run; nothing about that write preserves what was there before. The only thing that does is that every `backup` run commits the result, so `git log <device>.cfg` becomes the change timeline, `git show <commit>:<device>.cfg` recovers any past version, and `promote` commits with a message like `Promote baseline — ISR1`, giving you a real audit trail of who blessed which config as "intended state" and when. This is also why `commit_changes()` hard-fails instead of silently writing the file if the target directory isn't already a git repo: without git, every prior version would be gone the instant the next `backup` overwrites it, with no way to recover it. `config-audit configure` validates this up front (a proposed `backup_dir`/`baseline_dir` must already be a git working tree) so this surfaces before a single device is contacted, not after.
 
+`backup_dir` and `baseline_dir` commonly live as sibling subdirectories of one shared private repo (that's what `configure` sets up by default — see Configuration above), not separate repos — and `commit_changes()` is written to handle that safely. Every git call it makes is scoped to its own subdirectory with a `-- .` pathspec, confirmed via direct testing that without it, `git add -A`/`git commit`/the staged-changes check all silently operate on the *entire* containing repo rather than just the directory passed in — meaning a `backup` run could otherwise sweep in and commit unrelated pending changes sitting in `baselines/`, corrupting the exact audit trail this design exists to provide.
+
 ## Repo structure
 
 ```
@@ -77,8 +79,8 @@ netmiko-config-audit/
 │   ├── server.py                # FastMCP glue (thin — registers the registry)
 │   ├── tools.py                 # pure tool logic; no MCP types; tested without SDK
 │   └── README.md                # MCP tool surface + install/run instructions
-└── tests/                       # 100 tests (pytest); no live gear, no network
-    ├── test_*.py                # Project 1 — 75 tests
+└── tests/                       # 105 tests (pytest); no live gear, no network
+    ├── test_*.py                # Project 1 — 80 tests
     ├── test_mcp_*.py            # MCP adapter — 25 offline + 4 SDK-gated
     └── fixtures/                # sanitized configs (RFC 5737 IPs, fake hosts, zero creds)
 ```
@@ -120,12 +122,18 @@ for you.
 ## Configuration
 
 1. `config/config.yaml` — two ways to set it up:
-   - **Interactive:** run `config-audit configure` — walks you through backup/baseline/report
-     locations and your device list. Validates as it goes: a location that resolves inside
-     *this* code repo is rejected (must be a separate, private repo), and a location that
-     isn't already a git working tree is rejected too (`backup`/`promote` require one) —
-     both catch real mistakes before a single device is contacted, not after. Also runs
-     automatically the first time any command needs `config.yaml` and it doesn't exist yet.
+   - **Interactive:** run `config-audit configure` — asks once for your private backup
+     repo's root directory, then offers to create the recommended `snapshots/`,
+     `baselines/`, and `reports/` subdirectories under it (or lets you point at existing
+     ones by a different name), then your device list. Asking for the repo root once
+     instead of three separately-typed paths removes the main way this used to go wrong
+     in practice — a single missing character (`..config-backups` instead of
+     `../config-backups`) silently resolving somewhere unintended. Validates as it goes:
+     a location that resolves inside *this* code repo is rejected (must be a separate,
+     private repo), and a location that isn't already a git working tree is rejected too
+     (`backup`/`promote` require one) — both catch real mistakes before a single device
+     is contacted, not after. Also runs automatically the first time any command needs
+     `config.yaml` and it doesn't exist yet.
    - **Manual:** `cp config/config.example.yaml config/config.yaml` and edit it directly.
      Point `backup_dir`/`baseline_dir` at your **separate, private** backup repo — not
      inside this code repo.
@@ -181,7 +189,7 @@ The `diff` command is entirely file-based and needs no device at all.
 
 ## Testing
 
-100 tests cover the offline pipeline end to end (75 for the tool, 25 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
+105 tests cover the offline pipeline end to end (80 for the tool, 25 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
 
 ```bash
 pip install -e ".[dev]"          # tool + tests
@@ -206,7 +214,7 @@ drops root, running as a dedicated `appuser`.
 
 ```bash
 docker build -t netmiko-audit .                        # runtime image (default target)
-docker build --target test -t netmiko-audit:test .     # runs the 100-test suite inside the image; build fails on any failure
+docker build --target test -t netmiko-audit:test .     # runs the 105-test suite inside the image; build fails on any failure
 ```
 
 `config.yaml`, `secrets.env`, and the backup/baseline directories are gitignored and
@@ -257,7 +265,7 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Structured JSON run report
 - [x] Pre-commit config sanitizer (`sanitize_check.py`)
 - [x] Human-gated `promote` (approve a drift into the baseline)
-- [x] 100-test suite: 75 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation, no-baseline vs. real-drift distinction) + 25 MCP adapter tests
+- [x] 105-test suite: 80 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression) + 25 MCP adapter tests
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [ ] Validate collector + normalization against physical ISR/Catalyst *(the one open item before production-ready)*

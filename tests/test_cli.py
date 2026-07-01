@@ -402,18 +402,17 @@ def test_prompt_devices_collects_until_blank_name(monkeypatch):
 
 
 def test_run_config_wizard_writes_valid_yaml(tmp_path, monkeypatch):
-    """End-to-end: the wizard writes a config.yaml that inventory.load_config can read."""
+    """End-to-end: repo root once, default subdirectories accepted, then devices --
+    writes a config.yaml that inventory.load_config can read."""
     from config_audit.cli import _run_config_wizard
 
-    backup_dir = tmp_path / "private" / "snapshots"
-    baseline_dir = tmp_path / "private" / "baselines"
-    report_dir = tmp_path / "private" / "reports"
-    backup_dir.mkdir(parents=True)
-    baseline_dir.mkdir(parents=True)
-    subprocess.run(["git", "init", "-q", str(tmp_path / "private")], check=True)
+    repo_root = tmp_path / "private"
+    repo_root.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo_root)], check=True)
 
     inputs = iter([
-        str(backup_dir), str(baseline_dir), str(report_dir), "y",  # confirm creating report_dir
+        str(repo_root),  # repo root
+        "", "", "",      # accept default snapshots/baselines/reports subdirectories
         "ISR1", "192.0.2.1", "cisco_ios", "",
     ])
     monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(inputs))
@@ -423,10 +422,43 @@ def test_run_config_wizard_writes_valid_yaml(tmp_path, monkeypatch):
 
     from config_audit.inventory import load_config
     cfg = load_config(config_path, secrets_path=tmp_path / "nonexistent.env")
-    assert cfg.settings.backup_dir == backup_dir.resolve()
-    assert cfg.settings.baseline_dir == baseline_dir.resolve()
+    assert cfg.settings.backup_dir == (repo_root / "snapshots").resolve()
+    assert cfg.settings.baseline_dir == (repo_root / "baselines").resolve()
+    assert cfg.settings.report_path == (repo_root / "reports").resolve()
     assert len(cfg.devices) == 1
     assert cfg.devices[0].name == "ISR1"
+
+
+def test_prompt_subdirectory_accepts_default(tmp_path, monkeypatch):
+    from config_audit.cli import _prompt_subdirectory
+
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "")  # accept default (Y)
+
+    result = _prompt_subdirectory(tmp_path, "snapshots", "current running-configs")
+    assert result == tmp_path / "snapshots"
+    assert result.exists()
+
+
+def test_prompt_subdirectory_declines_default_and_uses_custom_name(tmp_path, monkeypatch):
+    from config_audit.cli import _prompt_subdirectory
+
+    inputs = iter(["n", "current"])  # decline default, use an existing custom name instead
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(inputs))
+
+    result = _prompt_subdirectory(tmp_path, "snapshots", "current running-configs")
+    assert result == tmp_path / "current"
+    assert result.exists()
+    assert not (tmp_path / "snapshots").exists()
+
+
+def test_prompt_subdirectory_rejects_blank_custom_name(tmp_path, monkeypatch):
+    from config_audit.cli import _prompt_subdirectory
+
+    inputs = iter(["n", "", "current"])  # decline default, blank name rejected, then valid
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(inputs))
+
+    result = _prompt_subdirectory(tmp_path, "snapshots", "current running-configs")
+    assert result == tmp_path / "current"
 
 
 def test_configure_command_declines_overwrite_leaves_file_untouched(tmp_path, monkeypatch):

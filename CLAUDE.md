@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **100 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 104 run.
+- Test: `pytest tests/ -q` — expect **105 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 109 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report | configure`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
@@ -74,15 +74,37 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   in `cli.py`), and `_ensure_config_file` auto-launches it only when `config.yaml` is
   missing — unlike secrets.env, an *existing* `config.yaml` is never auto-reprompted
   (it holds a whole device inventory, not one credential pair; nagging on every
-  command would be worse than useful). `_prompt_directory` validates `backup_dir`/
-  `baseline_dir` before writing anything: rejects a path that resolves inside this
-  same code repo (via `gitstore.git_repo_root`, comparing against `Path.cwd()`'s repo
-  root — must be a SEPARATE, private repo), and rejects a path that isn't already a
-  git working tree (via `gitstore.is_git_repo`) since `commit_changes` requires one.
-  `report_path` skips both checks (`require_git=False`) since `report.write_report`
-  never commits. Reused `gitstore.is_git_repo`/`git_repo_root` rather than
-  duplicating subprocess logic in `cli.py` — keep git subprocess calls in
-  `gitstore.py`, not scattered across modules.
+  command would be worse than useful).
+- **The wizard asks for one repo root, then offers to create `snapshots/`/
+  `baselines/`/`reports/` under it** (`_prompt_directory` for the root,
+  `_prompt_subdirectory` for each recommended subdirectory) — it does NOT ask for
+  `backup_dir`/`baseline_dir`/`report_path` as three independently-typed paths
+  anymore. That redesign exists because three separately-typed paths was the actual
+  source of a real user error: a single missing character (`..config-backups`
+  instead of `../config-backups`) silently resolved to a different, unintended
+  location instead of erroring, and the only reason it got caught was that the
+  mistyped path happened to land inside the code repo, triggering the same-repo
+  rejection by coincidence, not by design. Asking once removes most of that surface.
+  `_prompt_directory` (still used for the repo root) validates: rejects a path that
+  resolves inside this same code repo (via `gitstore.git_repo_root`, comparing
+  against `Path.cwd()`'s repo root — must be a SEPARATE, private repo), and rejects
+  a path that isn't already a git working tree (via `gitstore.is_git_repo`) since
+  `commit_changes` requires one. `_prompt_subdirectory` does NOT re-run either
+  check — any subdirectory of an already-validated repo root inherits its validity.
+  Reused `gitstore.is_git_repo`/`git_repo_root` rather than duplicating subprocess
+  logic in `cli.py` — keep git subprocess calls in `gitstore.py`, not scattered
+  across modules.
+- **`gitstore.commit_changes()` scopes every git call to `repo_dir` with a `-- .`
+  pathspec.** Confirmed via direct testing that without it, `git add -A`/
+  `git commit`/the staged-changes check (`git diff --cached --quiet`) all operate
+  on the WHOLE containing repo, not just `repo_dir`, even with `-C repo_dir` set —
+  because `backup_dir` and `baseline_dir` are commonly sibling subdirectories of one
+  shared repo (the `configure` wizard's default layout), a `backup` run without this
+  fix would silently sweep in and commit unrelated pending changes sitting in
+  `baselines/` (and vice versa for `promote`), corrupting the "who approved what and
+  when" audit trail this whole design exists to provide. If you ever touch this
+  function, re-verify the pathspec against real git behavior rather than assuming —
+  see `tests/test_gitstore.py`'s two scoping regression tests for the exact repro.
 - **`config.example.yaml` must say `baseline_dir`, not `golden_dir`.** An earlier
   draft used `golden_dir`, which parses as valid YAML but is silently ignored by
   `inventory.load_config` (which reads `baseline_dir` specifically) — this caused a

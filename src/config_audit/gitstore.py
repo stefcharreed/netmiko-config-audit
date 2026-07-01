@@ -68,22 +68,37 @@ def commit_changes(repo_dir: Path, message: str | None = None) -> bool:
 
     Hardened: verifies repo_dir is a git repo, and a real git failure raises
     instead of being silently read as "no changes."
+
+    Every git call below is scoped to repo_dir specifically via a `-- .` pathspec.
+    repo_dir is commonly a SUBDIRECTORY of a larger repo (e.g. backup_dir and
+    baseline_dir both living under the same private repo) -- confirmed via direct
+    testing that plain `git add -A`/`git commit`/`git diff --cached --quiet`
+    (no pathspec) all operate on the WHOLE containing repo, not just repo_dir, even
+    with `-C repo_dir` set. Without the pathspec, a `backup` run could silently
+    sweep in and commit unrelated pending changes sitting in baseline_dir (or
+    vice versa for `promote`), corrupting the "who approved what and when" audit
+    trail this whole git-backed design exists to provide. See CLAUDE.md.
     """
     subprocess.run(
         ["git", "-C", str(repo_dir), "rev-parse", "--is-inside-work-tree"],
         check=True, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
     )
-    subprocess.run(["git", "-C", str(repo_dir), "add", "-A"], check=True, timeout=_GIT_TIMEOUT)
+    subprocess.run(
+        ["git", "-C", str(repo_dir), "add", "-A", "--", "."], check=True, timeout=_GIT_TIMEOUT
+    )
 
-    # Anything staged? `git diff --cached --quiet` exits 0 = no changes, 1 = changes.
-    staged = subprocess.run(["git", "-C", str(repo_dir), "diff", "--cached", "--quiet"], timeout=_GIT_TIMEOUT)
+    # Anything staged for repo_dir specifically? exits 0 = no changes, 1 = changes.
+    staged = subprocess.run(
+        ["git", "-C", str(repo_dir), "diff", "--cached", "--quiet", "--", "."],
+        timeout=_GIT_TIMEOUT,
+    )
     if staged.returncode == 0:
         return False   # nothing to commit
 
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     message = message or f"Config backup — {stamp}"
     subprocess.run(
-        ["git", "-C", str(repo_dir), "commit", "-m", message],
+        ["git", "-C", str(repo_dir), "commit", "-m", message, "--", "."],
         check=True, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
     )
     return True
