@@ -221,6 +221,34 @@ def _prompt_directory(label: str, *, require_git: bool, code_repo_root: Path | N
         return resolved
 
 
+def _prompt_subdirectory(repo_root: Path, default_name: str, label: str) -> Path:
+    """Offer to create repo_root/default_name for `label` (the recommended default,
+    matching this project's own real convention: snapshots/baselines/reports as
+    siblings in one private repo). Lets the user pick a different subdirectory name
+    under repo_root instead, if they already have one they want to reuse.
+
+    No separate git-repo/same-repo validation here -- any subdirectory of an
+    already-validated repo_root inherits its validity, so re-checking would just
+    be redundant work for no benefit.
+    """
+    default_path = repo_root / default_name
+    while True:
+        resp = input(f"Create {default_path} for {label}? [Y/n] ").strip().lower()
+        if resp in ("", "y", "yes"):
+            default_path.mkdir(parents=True, exist_ok=True)
+            return default_path
+        if resp in ("n", "no"):
+            while True:
+                name = input(f"  Subdirectory name under {repo_root} to use instead: ").strip()
+                if not name:
+                    console.print("[red]Can't be blank.[/red]")
+                    continue
+                target = (repo_root / name).resolve()
+                target.mkdir(parents=True, exist_ok=True)
+                return target
+        console.print("[red]Please answer y or n.[/red]")
+
+
 def _prompt_devices() -> list[dict[str, str]]:
     """Loop collecting devices (name/host/device_type) until a blank name ends it."""
     console.print("\nAdd devices (blank name when done):")
@@ -239,18 +267,23 @@ def _prompt_devices() -> list[dict[str, str]]:
 
 
 def _run_config_wizard(config_path: Path) -> None:
-    """Interactively build config.yaml: backup/baseline/report locations + device list.
+    """Interactively build config.yaml: one private repo root, its recommended
+    backup/baseline/report subdirectories, and the device list.
 
-    backup_dir/baseline_dir are validated before anything is written (see
-    _prompt_directory) instead of only surfacing a problem once `backup` actually
-    runs against real devices.
+    Asking for the repo root once (instead of three independent paths) removes
+    the main way this used to go wrong in practice: a typo in any of three
+    separately-typed paths (e.g. `..config-backups` instead of `../config-backups`)
+    silently resolving somewhere unintended. Validated before anything is written
+    (see _prompt_directory) instead of only surfacing a problem once `backup`
+    actually runs against real devices.
     """
     from . import gitstore
 
     console.print(
         Panel(
-            "Let's set up config.yaml — where backups/baselines/reports live, and "
-            "which devices to manage.",
+            "Let's set up config.yaml. First, the private repo where backups/"
+            "baselines/reports live; then the recommended subdirectories under it; "
+            "then your device list.",
             title="Configure",
             border_style="cyan",
         )
@@ -258,18 +291,16 @@ def _run_config_wizard(config_path: Path) -> None:
 
     code_repo_root = gitstore.git_repo_root(Path.cwd())
 
-    backup_dir = _prompt_directory(
-        "Backup directory (current running-configs)",
+    repo_root = _prompt_directory(
+        "Private backup repo (git repo root)",
         require_git=True, code_repo_root=code_repo_root,
     )
-    baseline_dir = _prompt_directory(
-        "Baseline directory (approved intended state)",
-        require_git=True, code_repo_root=code_repo_root,
-    )
-    report_path = _prompt_directory(
-        "Report directory (JSON run summaries)",
-        require_git=False, code_repo_root=code_repo_root,
-    )
+    console.print(f"[dim]Using {repo_root} — recommended subdirectories below.[/dim]")
+
+    backup_dir = _prompt_subdirectory(repo_root, "snapshots", "current running-configs")
+    baseline_dir = _prompt_subdirectory(repo_root, "baselines", "approved intended state")
+    report_path = _prompt_subdirectory(repo_root, "reports", "JSON run summaries")
+
     devices = _prompt_devices()
     if not devices:
         console.print(

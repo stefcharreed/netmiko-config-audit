@@ -53,3 +53,60 @@ def test_commit_raises_outside_a_git_repo(tmp_path):
     write_config(tmp_path, "ISR1", "hostname ISR1\n")  # tmp_path is NOT a git repo
     with pytest.raises(subprocess.CalledProcessError):
         commit_changes(tmp_path, message="should fail")
+
+
+def test_commit_scoped_to_subdirectory_ignores_sibling_changes(tmp_path):
+    """backup_dir and baseline_dir commonly share one repo as sibling subdirectories.
+    A commit_changes(backup_dir) call must not sweep in or report on unrelated
+    pending changes sitting in baseline_dir -- confirmed via direct git testing
+    that plain (unscoped) add/commit/diff --cached all operate on the WHOLE repo,
+    not just the -C'd directory, which would corrupt the audit trail.
+    """
+    _git_init(tmp_path)
+    snapshots = tmp_path / "snapshots"
+    baselines = tmp_path / "baselines"
+    write_config(snapshots, "ISR1", "v1\n")
+    write_config(baselines, "ISR1", "v1\n")
+    commit_changes(tmp_path, message="initial")
+
+    # A real change in snapshots/, plus something staged (but not committed) in
+    # baselines/ from an unrelated, earlier operation.
+    write_config(snapshots, "ISR1", "v2\n")
+    write_config(baselines, "ISR1", "STALE UNRELATED EDIT\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "baselines/ISR1.cfg"], check=True)
+
+    committed = commit_changes(snapshots, message="backup run")
+    assert committed is True
+
+    log = subprocess.run(
+        ["git", "-C", str(tmp_path), "show", "--stat", "-1", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "snapshots/ISR1.cfg" in log
+    assert "baselines/ISR1.cfg" not in log  # must NOT have been swept into this commit
+
+    # The stale baseline edit must still be sitting there, staged and untouched.
+    status = subprocess.run(
+        ["git", "-C", str(tmp_path), "status", "--short"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    assert "baselines/ISR1.cfg" in status
+
+
+def test_commit_scoped_reports_no_changes_when_only_sibling_has_staged_edits(tmp_path):
+    """If backup_dir itself has no new changes, commit_changes must return False
+    even when an unrelated sibling directory has staged (uncommitted) changes --
+    it must not falsely report 'committed' based on the sibling's staged state.
+    """
+    _git_init(tmp_path)
+    snapshots = tmp_path / "snapshots"
+    baselines = tmp_path / "baselines"
+    write_config(snapshots, "ISR1", "v1\n")
+    write_config(baselines, "ISR1", "v1\n")
+    commit_changes(tmp_path, message="initial")
+
+    # No new snapshots/ change this run; only an unrelated staged edit in baselines/.
+    write_config(baselines, "ISR1", "STALE\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "baselines/ISR1.cfg"], check=True)
+
+    assert commit_changes(snapshots, message="backup run") is False
