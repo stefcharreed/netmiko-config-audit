@@ -12,6 +12,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
+- Docker runtime image: `docker build -t netmiko-audit .`
+- Docker test stage (runs the real suite inside the image): `docker build --target test -t netmiko-audit:test .`
 
 ## Layout
 - `src/config_audit/` — the tool: inventory, collector, normalize, drift, gitstore,
@@ -45,8 +47,19 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 - The live `fetch_running_config` Netmiko body is validated against physical gear, not
   fixtures — don't claim it's "tested" without a hardware run. The owner retypes this
   body himself for muscle memory; **do not rewrite it wholesale.**
+- **The Docker image needs `git` on PATH** (base stage installs it via apt) — `gitstore.py`
+  shells out to `git` for every commit, so a base image without it builds fine but fails
+  the moment `backup`/`promote` actually runs. This bit us once already; if the base image
+  ever changes, re-verify `git` is still installed, don't assume.
+- `config.yaml`, `secrets.env`, and the backup/baseline dirs are gitignored and external
+  to the repo — mount them into the container at run time, never `COPY` them into the
+  image (secrets baked into an image layer are recoverable from history even after a
+  later layer deletes them).
 
 ## Before saying "done"
 1. `pytest tests/ -q` green.
 2. `ruff check .` clean.
 3. `git status` — confirm no `secrets.env`, real IPs, or hashes staged.
+4. If the `Dockerfile` changed: `docker build --target test -t netmiko-audit:test .` green,
+   and a real command (not just `--help`) run against mounted fixtures still gives the
+   expected output — building/`--help` alone does not prove the image works.
