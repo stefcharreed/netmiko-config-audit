@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **82 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 86 run.
+- Test: `pytest tests/ -q` — expect **87 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 91 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
@@ -49,6 +49,13 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   SSH later. The optional enable/secret prompt skips confirmation entirely on a blank
   first entry. Any test exercising this needs enough `getpass.getpass` return values
   queued for the confirm round-trip, not just one per prompt.
+- **`_invalid_secret_reason()` rejects password shapes python-dotenv silently
+  corrupts** — confirmed via direct testing: a `' #'` sequence gets truncated as an
+  inline comment, and trailing whitespace gets silently stripped, both with zero
+  error at read time. A blank required password is also rejected (the optional
+  enable/secret can still be blank to skip it). If you touch this, re-verify against
+  the actual installed `python-dotenv` version rather than assuming — its comment/
+  whitespace handling is what's being defended against, not a made-up rule.
 - **normalize() applies to BOTH sides** (baseline and current) before diffing.
   Normalizing one side manufactures phantom drift. Never sort lines — ACL order is
   meaningful.

@@ -153,3 +153,42 @@ def test_optional_password_confirmation_skipped_when_blank(monkeypatch):
 
     result = _prompt_confirmed_password("Enable secret", optional=True)
     assert result == ""
+
+
+def test_required_password_blank_is_rejected_then_retries(monkeypatch, capsys):
+    """A blank required password re-prompts instead of writing an empty credential."""
+    from config_audit.cli import _prompt_confirmed_password
+
+    responses = iter(["", "realpass", "realpass"])
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(responses))
+
+    result = _prompt_confirmed_password("Default password")
+
+    assert result == "realpass"
+    assert "Can't be blank" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["p@ss #word", "trailing   ", "embedded\nnewline"],
+    ids=["space-hash", "trailing-whitespace", "newline"],
+)
+def test_password_shapes_dotenv_would_corrupt_are_rejected(monkeypatch, capsys, bad_value):
+    """Values python-dotenv silently mangles are rejected before they reach secrets.env."""
+    from config_audit.cli import _prompt_confirmed_password
+
+    responses = iter([bad_value, bad_value, "safepass", "safepass"])
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(responses))
+
+    result = _prompt_confirmed_password("Default password")
+
+    assert result == "safepass"
+    assert capsys.readouterr().out  # some rejection message was printed
+
+
+def test_invalid_secret_reason_accepts_ordinary_passwords():
+    """Sanity check: normal-looking passwords aren't flagged as unsafe."""
+    from config_audit.cli import _invalid_secret_reason
+
+    assert _invalid_secret_reason("Tr0ub4dor&3") is None
+    assert _invalid_secret_reason("p@ssword#123") is None  # '#' with no preceding space is fine
