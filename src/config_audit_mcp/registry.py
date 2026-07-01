@@ -54,6 +54,10 @@ def _promote_baseline(device: str, confirm: bool = False) -> dict:
     return tools.promote_baseline(device, confirm=confirm)
 
 
+def _backup_now() -> dict:
+    return tools.backup_now()
+
+
 # --- the surface ------------------------------------------------------------
 
 REGISTRY: list[ToolSpec] = [
@@ -89,8 +93,12 @@ REGISTRY: list[ToolSpec] = [
         "change; set confirm=True only when a human has approved the exact diff.",
         mutating=True,
     ),
-    # backup_now (live SSH pull) is intentionally NOT in the registry yet — it is the
-    # only capability that needs real gear, and it waits on Project 1's physical-gear
-    # validation. When ready, add a handler + a ToolSpec(..., needs_gear=True) here and
-    # server.py picks it up automatically.
+    ToolSpec(
+        "backup_now", _backup_now,
+        "Pull every managed device's live running-config over SSH right now and "
+        "commit the results to the backup repo. This is the one tool that "
+        "contacts real network gear — everything else here is file-based.",
+        mutating=True,
+        needs_gear=True,
+    ),
 ]

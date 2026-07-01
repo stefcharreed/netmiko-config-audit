@@ -134,6 +134,39 @@ def get_stored_config(device: str, which: str = "current",
     return {"device": device, "which": which, "exists": bool(text), "config": text}
 
 
+# --- live tool (needs real gear) -------------------------------------------
+
+def backup_now(config_path: str | None = None, source_texts: dict | None = None) -> dict:
+    """Pull every managed device's live running-config over SSH and commit backups.
+
+    Mirrors the CLI's `backup` command exactly (same collector.collect_all +
+    gitstore.write_config/commit_changes calls), reshaped for an LLM consumer.
+    This is the one MCP tool that contacts real network gear -- collector's live
+    SSH path is already hardware-validated (Project 1's own CLI `backup`); what's
+    new here is purely the reshaping into a JSON result, which is what
+    `source_texts` lets you test without a device (mirrors collect_all's own
+    offline seam). `source_texts` is a testing-only parameter -- the registry
+    handler always calls this with none, so an LLM caller never sees it.
+
+    Returns {results: [{device, ok, error}], committed}.
+    """
+    from config_audit import collector
+
+    cfg = _load(config_path)
+    results = collector.collect_all(cfg.devices, source_texts=source_texts)
+    for r in results:
+        if r.ok:
+            gitstore.write_config(cfg.settings.backup_dir, r.device, r.config_text)
+    committed = gitstore.commit_changes(cfg.settings.backup_dir)
+    return {
+        "results": [
+            {"device": r.device, "ok": r.ok, "error": r.error or None}
+            for r in results
+        ],
+        "committed": committed,
+    }
+
+
 # --- mutating tool (gated) -------------------------------------------------
 
 def promote_baseline(device: str, confirm: bool = False,

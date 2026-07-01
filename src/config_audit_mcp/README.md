@@ -37,13 +37,18 @@ the part that *does* is a dozen one-line registrations.
 | `plan_promotion(device)` | read-only | no |
 | `get_config(device, which)` | read-only | no |
 | `promote_baseline(device, confirm)` | **mutating** (needs `confirm=True`) | no |
-| `backup_now(device)` | **live SSH** — *not yet registered* | **yes** |
+| `backup_now()` | **mutating + live SSH** | **yes** |
 
 The interactive `y/N` gate from the CLI becomes the explicit `confirm` parameter on
 `promote_baseline`: with `confirm=False` it only reports what *would* change, so an
-agent has to be deliberately instructed to write. `backup_now` is intentionally left
-unregistered until Project 1's live path is validated against physical gear — wiring
-an unvalidated SSH path into an agent tool is exactly the wrong order.
+agent has to be deliberately instructed to write. `backup_now` was intentionally left
+unregistered until Project 1's live path was validated against physical gear — wiring
+an unvalidated SSH path into an agent tool would have been exactly the wrong order.
+Now that P1's hardware validation is done, it's registered: pulls every managed
+device's live config over SSH and commits the backups, mirroring the CLI's `backup`
+command exactly. It has no `confirm` gate (same as the CLI) since it doesn't write to
+baselines or devices — only to the backup repo, which is what `backup` has always done
+unattended via cron.
 
 ## Requirements
 
@@ -80,7 +85,8 @@ Project 1's own suite; this layer only tests the reshaping.
 
 ## Status
 
-🚧 Scaffold. Tool logic is implemented and tested against Project 1's real functions.
-The `server.py` SDK registration is written against the official `mcp` SDK (1.x) but
-is unverified end-to-end until installed in an environment with the SDK. `backup_now`
-is deferred until Project 1's physical-gear validation lands.
+✅ Full tool surface implemented and tested, including `backup_now` now that Project
+1's hardware validation is done. Verified end-to-end with the real `mcp` SDK
+installed (not just the SDK-free `tools.py` tests): all 7 tools register on the
+running `FastMCP` server, and the full suite (112 tests with the SDK installed)
+passes.

@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **105 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 109 run.
+- Test: `pytest tests/ -q` — expect **108 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 112 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report | configure`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
@@ -143,6 +143,17 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   requires `confirm=True`. Do not add an auto-approve path.
 - **git history is the timeline.** One file per device, overwritten each run;
   `git log <device>.cfg` is the change log. No timestamped filenames.
+- **`backup_now` (MCP) is registered now that P1's hardware validation is done** —
+  it was deliberately held back until then (see `config_audit_mcp/registry.py`'s
+  git history for the reasoning: wiring an unvalidated live SSH path into an agent
+  tool is the wrong order). It mirrors the CLI's `backup` exactly (same
+  `collector.collect_all` + `gitstore.write_config`/`commit_changes` calls) and has
+  no `confirm` gate, matching the CLI (it only writes to the backup repo, which
+  `backup` has always done unattended via cron — `promote_baseline` is the one
+  that needs `confirm` because it touches the baseline). Its tests use
+  `collector.collect_all`'s own `source_texts` offline seam, not a real device —
+  do the same for any future gear-touching tool rather than mocking Netmiko
+  directly.
 
 ## Safety / risk zones
 - **Never commit secrets.** Credentials come from `secrets.env` (gitignored) at

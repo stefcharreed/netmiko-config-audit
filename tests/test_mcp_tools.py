@@ -22,14 +22,20 @@ DRIFTED = (
 )
 
 
+def _git_init(path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(path)], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.email", "t@example.test"], check=True)
+    subprocess.run(["git", "-C", str(path), "config", "user.name", "Test"], check=True)
+
+
 def _project(tmp_path: Path, *, backup: str, baseline: str | None = BASELINE) -> str:
     """Build a temp project (config.yaml + populated dirs). Returns the config path."""
     backup_dir, baseline_dir = tmp_path / "backups", tmp_path / "baselines"
     backup_dir.mkdir(); baseline_dir.mkdir()
-    # The baseline dir is its own git repo — promote_baseline commits into it.
-    subprocess.run(["git", "init", "-q", str(baseline_dir)], check=True)
-    subprocess.run(["git", "-C", str(baseline_dir), "config", "user.email", "t@example.test"], check=True)
-    subprocess.run(["git", "-C", str(baseline_dir), "config", "user.name", "Test"], check=True)
+    # Both dirs are their own git repo — promote_baseline commits into baseline_dir,
+    # backup_now commits into backup_dir.
+    _git_init(backup_dir)
+    _git_init(baseline_dir)
     (backup_dir / "ISR1.cfg").write_text(backup, encoding="utf-8")
     if baseline is not None:
         (baseline_dir / "ISR1.cfg").write_text(baseline, encoding="utf-8")
@@ -123,3 +129,53 @@ def test_get_config_returns_baseline_and_current(tmp_path):
     config = _project(tmp_path, backup=DRIFTED)
     assert tools.get_stored_config("ISR1", "current", config)["config"] == DRIFTED
     assert tools.get_stored_config("ISR1", "baseline", config)["config"] == BASELINE
+
+
+def test_backup_now_writes_and_commits_via_source_texts(tmp_path):
+    """The offline seam (source_texts) proves the reshaping without live SSH --
+    collector's live path itself is already hardware-validated elsewhere."""
+    config = _project(tmp_path, backup=BASELINE)
+    result = tools.backup_now(config, source_texts={"ISR1": DRIFTED})
+
+    assert result["committed"] is True
+    assert result["results"] == [{"device": "ISR1", "ok": True, "error": None}]
+    assert (tmp_path / "backups" / "ISR1.cfg").read_text(encoding="utf-8") == DRIFTED
+
+
+def test_backup_now_reports_per_device_failure_without_aborting(tmp_path, monkeypatch):
+    """A device that fails to collect is reported in the result, not raised --
+    proves backup_now's reshaping handles collector's failure shape correctly.
+    Monkeypatches collect_all (rather than leaving source_texts empty) so this
+    stays fast and deterministic instead of attempting a real, slow connection
+    to the RFC 5737 test address -- collector's own real-failure behavior is
+    collector.py's concern, not this reshaping layer's."""
+    from config_audit import collector
+
+    config = _project(tmp_path, backup=BASELINE)
+    monkeypatch.setattr(
+        collector, "collect_all",
+        lambda devices, source_texts=None: [
+            collector.CollectionResult(
+                device="ISR1", ok=False, error="TCP connection to device failed."
+            )
+        ],
+    )
+
+    result = tools.backup_now(config)
+
+    assert result["results"] == [
+        {"device": "ISR1", "ok": False, "error": "TCP connection to device failed."}
+    ]
+    # the failed device's backup file is left untouched, not overwritten with nothing
+    assert (tmp_path / "backups" / "ISR1.cfg").read_text(encoding="utf-8") == BASELINE
+
+
+def test_backup_now_second_run_with_no_changes_reports_uncommitted(tmp_path):
+    """Re-running with identical content reports committed=False, matching the
+    CLI's 'no changes since last run' behavior."""
+    config = _project(tmp_path, backup=BASELINE)
+    first = tools.backup_now(config, source_texts={"ISR1": BASELINE})
+    assert first["committed"] is True  # first write is new content to the repo
+
+    second = tools.backup_now(config, source_texts={"ISR1": BASELINE})
+    assert second["committed"] is False
