@@ -68,3 +68,51 @@ def test_promote_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, mo
     assert code == 1
     assert "aborted" in capsys.readouterr().out.lower()
     assert baseline_file.read_text(encoding="utf-8") == before  # unchanged
+
+
+def test_ensure_secrets_file_skips_prompt_when_file_exists(tmp_path, monkeypatch):
+    """No prompt at all if secrets.env is already there -- input() would hang otherwise."""
+    from config_audit.cli import _ensure_secrets_file
+
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("NET_USERNAME=existing\n", encoding="utf-8")
+
+    def _boom(*_a, **_k):
+        raise AssertionError("should not prompt when secrets.env already exists")
+
+    monkeypatch.setattr("builtins.input", _boom)
+    monkeypatch.setattr("getpass.getpass", _boom)
+
+    _ensure_secrets_file(secrets_path)
+    assert secrets_path.read_text(encoding="utf-8") == "NET_USERNAME=existing\n"
+
+
+def test_ensure_secrets_file_prompts_and_writes_when_missing(tmp_path, monkeypatch, capsys):
+    """First-run wizard writes username/password; enable secret is optional and skippable."""
+    from config_audit.cli import _ensure_secrets_file
+
+    secrets_path = tmp_path / "secrets.env"
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "admin")
+    passwords = iter(["hunter2", ""])  # password, then skip enable secret
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(passwords))
+
+    _ensure_secrets_file(secrets_path)
+
+    content = secrets_path.read_text(encoding="utf-8")
+    assert "NET_USERNAME=admin" in content
+    assert "NET_PASSWORD=hunter2" in content
+    assert "NET_SECRET" not in content
+    assert "Wrote" in capsys.readouterr().out
+
+
+def test_ensure_secrets_file_includes_secret_when_provided(tmp_path, monkeypatch):
+    """The enable/secret line is written when the user provides one."""
+    from config_audit.cli import _ensure_secrets_file
+
+    secrets_path = tmp_path / "secrets.env"
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "admin")
+    passwords = iter(["hunter2", "enable123"])
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(passwords))
+
+    _ensure_secrets_file(secrets_path)
+    assert "NET_SECRET=enable123" in secrets_path.read_text(encoding="utf-8")

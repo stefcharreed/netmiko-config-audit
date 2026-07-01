@@ -6,7 +6,7 @@ A Python tool that pulls running-configs from Cisco devices over SSH, version-co
 
 > [![tests](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml)
 
-> **Status:** 🚧 v1.1 — feature-complete and tested offline. The full pipeline (collect → normalize → drift → promote → report) is implemented and covered by a 76-test suite that passes against sanitized fixtures (plus 4 SDK-gated MCP wiring tests that run when the mcp package is installed). The **one** remaining step before I call it production-ready is validating the live SSH pull and normalization against physical ISR/Catalyst gear — see the [Roadmap](#roadmap). I'm foregrounding that gap on purpose: a drift tool's whole credibility is that it doesn't cry drift when nothing changed, and that can only be proven against real hardware.
+> **Status:** 🚧 v1.1 — feature-complete and tested offline. The full pipeline (collect → normalize → drift → promote → report) is implemented and covered by a 79-test suite that passes against sanitized fixtures (plus 4 SDK-gated MCP wiring tests that run when the mcp package is installed). The **one** remaining step before I call it production-ready is validating the live SSH pull and normalization against physical ISR/Catalyst gear — see the [Roadmap](#roadmap). I'm foregrounding that gap on purpose: a drift tool's whole credibility is that it doesn't cry drift when nothing changed, and that can only be proven against real hardware.
 
 ## Overview
 
@@ -73,8 +73,8 @@ netmiko-config-audit/
 │   ├── server.py                # FastMCP glue (thin — registers the registry)
 │   ├── tools.py                 # pure tool logic; no MCP types; tested without SDK
 │   └── README.md                # MCP tool surface + install/run instructions
-└── tests/                       # 76 tests (pytest); no live gear, no network
-    ├── test_*.py                # Project 1 — 51 tests
+└── tests/                       # 79 tests (pytest); no live gear, no network
+    ├── test_*.py                # Project 1 — 54 tests
     ├── test_mcp_*.py            # MCP adapter — 25 offline + 4 SDK-gated
     └── fixtures/                # sanitized configs (RFC 5737 IPs, fake hosts, zero creds)
 ```
@@ -99,13 +99,16 @@ pip install -e .          # installs deps + the `config-audit` command
 
 ## Configuration
 
-1. Copy the templates:
+1. Copy the config template:
    ```bash
-   cp secrets.env.example secrets.env
    cp config/config.example.yaml config/config.yaml
    ```
-2. Edit `secrets.env` with device credentials. **Gitignored — never commit it.**
-3. Edit `config/config.yaml` with device addresses and output paths. Point `backup_dir` and `baseline_dir` at your **separate, private** backup repo — not inside this code repo.
+   Edit it with device addresses and output paths. Point `backup_dir` and `baseline_dir` at your **separate, private** backup repo — not inside this code repo.
+2. Credentials in `secrets.env` — two ways to set them up:
+   - **Interactive (first run):** just run `config-audit backup` or `config-audit report` with no `secrets.env` present — you'll be prompted for a default username/password (and optional enable secret), and the file is written for you.
+   - **Manual:** `cp secrets.env.example secrets.env` and edit it directly.
+
+   Either way, `secrets.env` is **gitignored — never commit it.**
 
 ## Usage
 
@@ -115,6 +118,12 @@ config-audit diff       # drift check: current backups vs. per-device baseline
 config-audit promote <DEVICE>   # review a device's drift, then approve it into the baseline
 config-audit report     # pull, drift-check, and write a JSON run summary
 ```
+
+Output is rendered with [`rich`](https://github.com/Textualize/rich) — colored tables for
+per-device status, colored unified diffs for drift (green additions, red removals). This is
+presentation only: every function under `src/config_audit/` still returns plain
+JSON-serializable data and never prints (see Architecture rules in `CLAUDE.md`) — the CLI is
+the only place rendering happens, so a future MCP/AI layer reads the same unstyled data.
 
 `promote` shows the exact diff and waits for an interactive `y/N` before it writes — there is **no `--yes` flag, by design.** Promoting a config into the baseline is a human/policy judgment, not something a script should do unattended. Exit codes: `0` promoted or already in sync, `1` drift found but you declined, `2` no backup to promote.
 
@@ -139,7 +148,7 @@ The `diff` command is entirely file-based and needs no device at all.
 
 ## Testing
 
-76 tests cover the offline pipeline end to end (51 for the tool, 25 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
+79 tests cover the offline pipeline end to end (54 for the tool, 25 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
 
 ```bash
 pip install -e ".[dev]"          # tool + tests
@@ -164,7 +173,7 @@ drops root, running as a dedicated `appuser`.
 
 ```bash
 docker build -t netmiko-audit .                        # runtime image (default target)
-docker build --target test -t netmiko-audit:test .     # runs the 76-test suite inside the image; build fails on any failure
+docker build --target test -t netmiko-audit:test .     # runs the 79-test suite inside the image; build fails on any failure
 ```
 
 `config.yaml`, `secrets.env`, and the backup/baseline directories are gitignored and
@@ -215,8 +224,9 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Structured JSON run report
 - [x] Pre-commit config sanitizer (`sanitize_check.py`)
 - [x] Human-gated `promote` (approve a drift into the baseline)
-- [x] 76-test suite: 51 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer) + 25 MCP adapter tests
+- [x] 79-test suite: 54 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard) + 25 MCP adapter tests
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
+- [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [ ] Validate collector + normalization against physical ISR/Catalyst *(the one open item before production-ready)*
 - [ ] Scheduled nightly run on the always-on host
 - [ ] **Platform stage 2:** syslog event pipeline (actual behavior) — not started, no repo yet

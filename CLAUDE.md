@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **76 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 80 run.
+- Test: `pytest tests/ -q` — expect **79 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 83 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
@@ -27,6 +27,22 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 - **Seam discipline:** functions return plain JSON-serializable data (dict/list/str/
   num/bool) and **never print**. Rendering lives in the caller (CLI / MCP). This is
   what lets one function feed both the CLI and the MCP server.
+- **`rich` rendering stays inside `cli.py`, never in the logic layer.** `cli.py` uses
+  `rich` (tables, colored diffs, panels) purely as presentation on top of the plain
+  data the logic functions already return — it does not change what those functions
+  return. If you add a new rendered view, format it in `cli.py`'s `_cmd_*` functions,
+  not by changing `drift.py`/`report.py`/etc. to know about styling.
+- **The `promote` y/N gate uses plain `input()`, not a `rich.Prompt`.** Deliberate:
+  `tests/test_cli.py` monkeypatches `builtins.input` directly to test the abort path,
+  and `rich.Prompt`'s input handling isn't guaranteed to route through the same hook.
+  Keep it as `input()` unless you also update that test's approach.
+- **The first-run secrets wizard (`_ensure_secrets_file`) only fires for `backup` and
+  `report`** (the two commands that actually need live-device credentials) — `diff`
+  and `promote` are file-only and would be prompted for nothing useful. It also uses
+  plain `input()`/`getpass.getpass()`, not rich prompts, for the same testability
+  reason as the promote gate above. If a future test calls `main()` with `backup` or
+  `report` against a temp dir with no `secrets.env`, it must monkeypatch both or the
+  test will hang/error waiting on real stdin.
 - **normalize() applies to BOTH sides** (baseline and current) before diffing.
   Normalizing one side manufactures phantom drift. Never sort lines — ACL order is
   meaningful.
