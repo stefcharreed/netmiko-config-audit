@@ -349,14 +349,23 @@ def _cmd_diff(cfg) -> int:
     table.add_column("Device")
     table.add_column("Status")
     diffs: dict[str, list[str]] = {}
+    no_baseline: list[str] = []
 
     for device in cfg.devices:
         current_path = cfg.settings.backup_dir / f"{device.name}.cfg"
         current = current_path.read_text(encoding="utf-8") if current_path.exists() else ""
+        baseline_path = cfg.settings.baseline_dir / f"{device.name}.cfg"
+        baseline_exists = baseline_path.exists()
         baseline = drift.load_baseline(cfg.settings.baseline_dir, device.name)
 
         result = drift.compare_to_baseline(device.name, current, baseline)
-        if result.has_drift:
+        if not baseline_exists:
+            # No baseline yet != drift -- there's nothing to compare against, so
+            # `compare_to_baseline` reporting the whole config as "changed" is
+            # correct but misleading if shown the same way as real drift.
+            no_baseline.append(device.name)
+            table.add_row(device.name, "[cyan]NO BASELINE[/cyan]")
+        elif result.has_drift:
             any_drift = True
             table.add_row(device.name, "[yellow]DRIFT[/yellow]")
             diffs[device.name] = result.diff_lines
@@ -366,7 +375,17 @@ def _cmd_diff(cfg) -> int:
     console.print(table)
     for name, lines in diffs.items():
         console.print(Panel(_render_diff(lines), title=name, border_style="yellow"))
-    return 1 if any_drift else 0
+    if no_baseline:
+        console.print(
+            Panel(
+                "No baseline exists yet for: " + ", ".join(no_baseline) + ". This isn't "
+                "drift — there's nothing to compare against. Run `config-audit promote "
+                "<device>` to establish the initial baseline from the current backup.",
+                title="No baseline",
+                border_style="cyan",
+            )
+        )
+    return 1 if (any_drift or no_baseline) else 0
 
 
 def _cmd_report(cfg) -> int:
@@ -374,8 +393,12 @@ def _cmd_report(cfg) -> int:
 
     results = collector.collect_all(cfg.devices)
     drift_results = []
+    no_baseline: list[str] = []
     for r in results:
         if r.ok:
+            baseline_path = cfg.settings.baseline_dir / f"{r.device}.cfg"
+            if not baseline_path.exists():
+                no_baseline.append(r.device)
             baseline = drift.load_baseline(cfg.settings.baseline_dir, r.device)
             drift_results.append(drift.compare_to_baseline(r.device, r.config_text, baseline))
 
@@ -389,8 +412,18 @@ def _cmd_report(cfg) -> int:
     summary.add_row("[yellow]Drifted:[/yellow]", str(len(run.drifted)))
     console.print(Panel(summary, title=f"Run report — {run.timestamp}"))
 
-    if run.drifted:
-        console.print("[yellow]Drifted:[/yellow] " + ", ".join(run.drifted))
+    # run.drifted (the JSON schema) doesn't distinguish "no baseline yet" from real
+    # drift -- that's fine for the stable report file, but the console should, so
+    # this isn't confused for an actual config change.
+    real_drift = [d for d in run.drifted if d not in no_baseline]
+    if real_drift:
+        console.print("[yellow]Drifted:[/yellow] " + ", ".join(real_drift))
+    if no_baseline:
+        console.print(
+            "[cyan]No baseline yet[/cyan] (not drift — nothing to compare against): "
+            + ", ".join(no_baseline)
+            + ". Run `config-audit promote <device>` to establish one."
+        )
     for name, err in run.failures.items():
         console.print(f"[red]{name}[/red]: {err}")
 

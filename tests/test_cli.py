@@ -13,12 +13,21 @@ from config_audit.cli import main
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
-def _project(tmp_path: Path, backup_fixture: str, baseline_fixture: str = "ISR1_baseline.cfg") -> Path:
-    """Build a temp project: config.yaml + populated backup/baseline dirs. Returns the config path."""
+def _project(
+    tmp_path: Path, backup_fixture: str, baseline_fixture: str | None = "ISR1_baseline.cfg"
+) -> Path:
+    """Build a temp project: config.yaml + populated backup/baseline dirs. Returns the config path.
+
+    baseline_fixture=None simulates a device with no baseline established yet --
+    the backups dir is populated but baselines/ISR1.cfg is never written.
+    """
     backup, baseline, reports = tmp_path / "backups", tmp_path / "baselines", tmp_path / "reports"
     backup.mkdir(); baseline.mkdir()
     (backup / "ISR1.cfg").write_text((FIXTURES / backup_fixture).read_text(), encoding="utf-8")
-    (baseline / "ISR1.cfg").write_text((FIXTURES / baseline_fixture).read_text(), encoding="utf-8")
+    if baseline_fixture is not None:
+        (baseline / "ISR1.cfg").write_text(
+            (FIXTURES / baseline_fixture).read_text(), encoding="utf-8"
+        )
     config = tmp_path / "config.yaml"
     config.write_text(
         "settings:\n"
@@ -63,6 +72,18 @@ def test_diff_detects_drift_returns_one(tmp_path, capsys):
     code = main(["-c", str(config), "diff"])
     assert code == 1
     assert "DRIFT" in capsys.readouterr().out
+
+
+def test_diff_no_baseline_is_distinct_from_drift(tmp_path, capsys):
+    """A device with no baseline yet shows NO BASELINE, not DRIFT -- these are not
+    the same thing, and showing the whole config as 'drift' is misleading."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    code = main(["-c", str(config), "diff"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "NO BASELINE" in out
+    assert "DRIFT" not in out
+    assert "config-audit promote" in out
 
 
 def test_promote_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, monkeypatch):
