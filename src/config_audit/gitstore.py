@@ -2,6 +2,13 @@
 
 Uses plain `git` via subprocess (no extra dependency). The backup repo is a
 SEPARATE git repository from this code repo — point settings.backup_dir at it.
+
+Why it has to be a git repo at all: write_config() overwrites <device>.cfg every
+run -- nothing about the write itself preserves history. git commit history IS
+the version history (see README's "Why the backup/baseline repo has to be git").
+That's why commit_changes() hard-fails if the target isn't already a git working
+tree, instead of silently writing the file: without git, every prior version
+would be gone the instant the next run overwrites it.
 """
 from __future__ import annotations
 

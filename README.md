@@ -43,6 +43,10 @@ inventory (config.yaml) ──> collector ──> gitstore ──> backup repo (
 
 Drift is computed against each device's **own** baseline (`baselines/<device>.cfg`) — never a single shared template. Heterogeneous gear means a shared template would flag everything as drift. `normalize()` is a pure function applied **identically to both the baseline and the current config** before diffing; normalizing only one side manufactures phantom drift, so this rule is load-bearing. It strips known-volatile lines (config header, `ntp clock-period`, blank/separator lines) but deliberately **keeps** password hashes (a changed credential is real drift) and line ordering (an ACL reorder is meaningful).
 
+### Why the backup/baseline repo has to be git
+
+There's no database or timestamped-file scheme here — **git itself is the version history.** `gitstore.write_config()` writes one file per device (`<device>.cfg`), overwritten every run; nothing about that write preserves what was there before. The only thing that does is that every `backup` run commits the result, so `git log <device>.cfg` becomes the change timeline, `git show <commit>:<device>.cfg` recovers any past version, and `promote` commits with a message like `Promote baseline — ISR1`, giving you a real audit trail of who blessed which config as "intended state" and when. This is also why `commit_changes()` hard-fails instead of silently writing the file if the target directory isn't already a git repo: without git, every prior version would be gone the instant the next `backup` overwrites it, with no way to recover it. `config-audit configure` validates this up front (a proposed `backup_dir`/`baseline_dir` must already be a git working tree) so this surfaces before a single device is contacted, not after.
+
 ## Repo structure
 
 ```
