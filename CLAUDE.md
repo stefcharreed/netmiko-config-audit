@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **99 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 103 run.
+- Test: `pytest tests/ -q` — expect **100 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 104 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report | configure`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
@@ -89,6 +89,29 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   real, confusing failure during hardware validation where `backup_dir` silently
   fell back to a default nobody set. If you ever add a new `settings` key, make sure
   the example file's key name is byte-for-byte what `inventory.py` actually reads.
+- **"No baseline yet" is not the same as "drift," and `_cmd_diff`/`_cmd_report` must
+  keep treating them separately.** `drift.compare_to_baseline()` can't tell the
+  difference itself — an empty baseline vs. a real config always comes back
+  `has_drift=True` with the whole file as the "delta." Confirmed live on real
+  hardware: a first-ever `diff` on a device with no promoted baseline printed
+  almost the entire config as if every line had drifted, which is technically
+  correct (nothing to compare against) but reads exactly like the drift-detection
+  logic is broken. The CLI layer checks `(baseline_dir / f"{name}.cfg").exists()`
+  itself and renders `NO BASELINE` distinctly (cyan, not yellow `DRIFT`) with a
+  pointer to `config-audit promote <device>` — don't collapse this back into a
+  single status, and don't "fix" it by changing `drift.py`'s comparison logic
+  (that logic is correct; `promote.py`'s `is_initial` already handles this exact
+  case the same way — this just brings `diff`/`report` in line with it).
+  `report.py`'s `RunReport.drifted` JSON field intentionally still includes
+  no-baseline devices (stable schema, don't change it) — only the console
+  rendering in `cli.py` splits them apart.
+- **Never manually copy a file into `baseline_dir`/`backup_dir` — always use
+  `promote`/`backup`.** A manual copy skips the git commit (breaks the "who
+  approved this and when" audit trail `commit_changes` exists to provide) and
+  skips the confirmation diff. It also silently does nothing useful if the
+  filename or directory doesn't exactly match what `config.yaml` points at —
+  there's no validation on a manual file drop the way there is going through
+  the CLI.
 - **normalize() applies to BOTH sides** (baseline and current) before diffing.
   Normalizing one side manufactures phantom drift. Never sort lines — ACL order is
   meaningful.
