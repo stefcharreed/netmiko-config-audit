@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **79 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 83 run.
+- Test: `pytest tests/ -q` — expect **82 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 86 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
@@ -43,6 +43,12 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   reason as the promote gate above. If a future test calls `main()` with `backup` or
   `report` against a temp dir with no `secrets.env`, it must monkeypatch both or the
   test will hang/error waiting on real stdin.
+- **Passwords are confirmed (typed twice) via `_prompt_confirmed_password`**, capped
+  at 3 attempts before aborting (`SystemExit(1)`) — masked input hides typos, so this
+  catches a mistyped password before it's written to `secrets.env` and silently fails
+  SSH later. The optional enable/secret prompt skips confirmation entirely on a blank
+  first entry. Any test exercising this needs enough `getpass.getpass` return values
+  queued for the confirm round-trip, not just one per prompt.
 - **normalize() applies to BOTH sides** (baseline and current) before diffing.
   Normalizing one side manufactures phantom drift. Never sort lines — ACL order is
   meaningful.

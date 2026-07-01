@@ -43,6 +43,30 @@ def _render_diff(lines: list[str]) -> Text:
     return text
 
 
+_MAX_PASSWORD_ATTEMPTS = 3
+
+
+def _prompt_confirmed_password(label: str, *, optional: bool = False) -> str:
+    """Prompt for a password twice and require they match; retries on mismatch.
+
+    Masked input means a typo is invisible until it fails an SSH login later --
+    catch it here instead. `optional=True` lets an empty first entry skip
+    confirmation entirely (used for the enable/secret prompt, which is skippable).
+    """
+    for attempt in range(_MAX_PASSWORD_ATTEMPTS):
+        value = getpass.getpass(f"{label}: ")
+        if optional and not value:
+            return value
+        confirm = getpass.getpass(f"Confirm {label.lower()}: ")
+        if value == confirm:
+            return value
+        remaining = _MAX_PASSWORD_ATTEMPTS - attempt - 1
+        if remaining:
+            console.print(f"[red]Didn't match[/red] — {remaining} attempt(s) left.")
+    console.print("[red]Too many mismatches — aborting setup. Run the command again.[/red]")
+    raise SystemExit(1)
+
+
 def _ensure_secrets_file(secrets_path: Path) -> None:
     """First-run setup: prompt for default device credentials if secrets.env is missing.
 
@@ -63,8 +87,10 @@ def _ensure_secrets_file(secrets_path: Path) -> None:
         )
     )
     username = input("Default username: ").strip()
-    password = getpass.getpass("Default password: ")
-    secret = getpass.getpass("Enable/secret password (optional, Enter to skip): ")
+    password = _prompt_confirmed_password("Default password")
+    secret = _prompt_confirmed_password(
+        "Enable/secret password (optional, Enter to skip)", optional=True
+    )
 
     lines = [
         "# Written by config-audit's first-run setup. Never commit this file.",
