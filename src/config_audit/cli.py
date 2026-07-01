@@ -100,21 +100,32 @@ def _prompt_confirmed_password(label: str, *, optional: bool = False) -> str:
 
 
 def _ensure_secrets_file(secrets_path: Path) -> None:
-    """First-run setup: prompt for default device credentials if secrets.env is missing.
+    """First-run setup: prompt for default device credentials if secrets.env is
+    missing, or offer to re-enter (overwrite) them if it already exists.
 
     Only called by commands that actually talk to live devices (backup, report) —
     diff/promote are file-only and need no credentials. Plain input()/getpass, not a
     rich Prompt, so this stays trivially monkeypatchable in tests the same way the
     existing promote confirmation gate already is.
     """
-    if secrets_path.exists():
-        return
+    first_run = not secrets_path.exists()
+    if not first_run:
+        resp = input(f"{secrets_path} already exists. Re-enter credentials? [y/N] ").strip().lower()
+        if resp not in ("y", "yes"):
+            return
 
     console.print(
         Panel(
-            f"No secrets.env found. Enter default device credentials — saved to "
-            f"[bold]{secrets_path}[/bold] (gitignored, never committed).",
-            title="First-run setup",
+            (
+                f"No secrets.env found. Enter default device credentials — saved to "
+                f"[bold]{secrets_path}[/bold] (gitignored, never committed)."
+            )
+            if first_run
+            else (
+                f"Re-entering default device credentials — this overwrites "
+                f"[bold]{secrets_path}[/bold]."
+            ),
+            title="First-run setup" if first_run else "Re-enter credentials",
             border_style="cyan",
         )
     )

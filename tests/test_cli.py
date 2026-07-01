@@ -70,21 +70,42 @@ def test_promote_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, mo
     assert baseline_file.read_text(encoding="utf-8") == before  # unchanged
 
 
-def test_ensure_secrets_file_skips_prompt_when_file_exists(tmp_path, monkeypatch):
-    """No prompt at all if secrets.env is already there -- input() would hang otherwise."""
+def test_ensure_secrets_file_leaves_file_untouched_when_declining_reentry(tmp_path, monkeypatch):
+    """Answering 'n' (or the [y/N] default) to the re-entry prompt makes no changes."""
     from config_audit.cli import _ensure_secrets_file
 
     secrets_path = tmp_path / "secrets.env"
     secrets_path.write_text("NET_USERNAME=existing\n", encoding="utf-8")
 
-    def _boom(*_a, **_k):
-        raise AssertionError("should not prompt when secrets.env already exists")
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: "n")
 
-    monkeypatch.setattr("builtins.input", _boom)
+    def _boom(*_a, **_k):
+        raise AssertionError("should not prompt for credentials when declining re-entry")
+
     monkeypatch.setattr("getpass.getpass", _boom)
 
     _ensure_secrets_file(secrets_path)
     assert secrets_path.read_text(encoding="utf-8") == "NET_USERNAME=existing\n"
+
+
+def test_ensure_secrets_file_reenters_when_confirmed(tmp_path, monkeypatch):
+    """Answering 'y' to the re-entry prompt overwrites the existing secrets.env."""
+    from config_audit.cli import _ensure_secrets_file
+
+    secrets_path = tmp_path / "secrets.env"
+    secrets_path.write_text("NET_USERNAME=oldvalue\n", encoding="utf-8")
+
+    inputs = iter(["y", "newuser"])  # confirm re-entry, then the new username
+    monkeypatch.setattr("builtins.input", lambda *_a, **_k: next(inputs))
+    passwords = iter(["newpass", "newpass", ""])  # password, confirm, skip enable secret
+    monkeypatch.setattr("getpass.getpass", lambda *_a, **_k: next(passwords))
+
+    _ensure_secrets_file(secrets_path)
+
+    content = secrets_path.read_text(encoding="utf-8")
+    assert "NET_USERNAME=newuser" in content
+    assert "NET_PASSWORD=newpass" in content
+    assert "oldvalue" not in content
 
 
 def test_ensure_secrets_file_prompts_and_writes_when_missing(tmp_path, monkeypatch, capsys):

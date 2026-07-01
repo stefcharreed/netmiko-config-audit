@@ -7,8 +7,8 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **87 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 91 run.
+- Test: `pytest tests/ -q` — expect **88 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 92 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
 - CLI: `config-audit backup | diff | promote <DEVICE> | report`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
@@ -43,6 +43,11 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   reason as the promote gate above. If a future test calls `main()` with `backup` or
   `report` against a temp dir with no `secrets.env`, it must monkeypatch both or the
   test will hang/error waiting on real stdin.
+- **If `secrets.env` already exists, the wizard asks `Re-enter credentials? [y/N]`**
+  before doing anything else — declining (or the `[y/N]` default) leaves the file
+  untouched with zero further prompts; confirming re-runs the full flow and
+  overwrites it. Any test exercising the "file already exists" path now needs an
+  `input()` value queued for that question too, not just for the username.
 - **Passwords are confirmed (typed twice) via `_prompt_confirmed_password`**, capped
   at 3 attempts before aborting (`SystemExit(1)`) — masked input hides typos, so this
   catches a mistyped password before it's written to `secrets.env` and silently fails
