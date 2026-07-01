@@ -5,8 +5,11 @@ settings:
   # Where pulled running-configs are written. Point this at your SEPARATE,
   # private backup repo — NOT inside this code repo.
   backup_dir: "../config-backups"
-  # Golden/baseline configs (intended state).
-  golden_dir: "../config-backups/golden"
+  # Per-device baselines (intended state). Key name matters: inventory.py reads
+  # `baseline_dir` specifically -- an older draft of this file said `golden_dir`,
+  # which parses fine as YAML but is silently ignored, falling back to a default
+  # you probably don't want.
+  baseline_dir: "../config-backups/baselines"
   # Structured JSON run reports.
   report_path: "../config-backups/reports"
 

@@ -6,7 +6,7 @@ A Python tool that pulls running-configs from Cisco devices over SSH, version-co
 
 > [![tests](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml)
 
-> **Status:** 🚧 v1.1 — feature-complete and tested offline. The full pipeline (collect → normalize → drift → promote → report) is implemented and covered by an 88-test suite that passes against sanitized fixtures (plus 4 SDK-gated MCP wiring tests that run when the mcp package is installed). The **one** remaining step before I call it production-ready is validating the live SSH pull and normalization against physical ISR/Catalyst gear — see the [Roadmap](#roadmap). I'm foregrounding that gap on purpose: a drift tool's whole credibility is that it doesn't cry drift when nothing changed, and that can only be proven against real hardware.
+> **Status:** 🚧 v1.1 — feature-complete and tested offline. The full pipeline (collect → normalize → drift → promote → report) is implemented and covered by a 99-test suite that passes against sanitized fixtures (plus 4 SDK-gated MCP wiring tests that run when the mcp package is installed). The **one** remaining step before I call it production-ready is validating the live SSH pull and normalization against physical ISR/Catalyst gear — see the [Roadmap](#roadmap). I'm foregrounding that gap on purpose: a drift tool's whole credibility is that it doesn't cry drift when nothing changed, and that can only be proven against real hardware.
 
 ## Overview
 
@@ -59,7 +59,7 @@ netmiko-config-audit/
 │   └── config.example.yaml      # copy -> config/config.yaml
 ├── src/config_audit/
 │   ├── __init__.py
-│   ├── cli.py                   # `config-audit backup | diff | promote | report`
+│   ├── cli.py                   # `config-audit backup | diff | promote | report | configure`
 │   ├── inventory.py             # config + secrets loader
 │   ├── collector.py             # Netmiko SSH pull (offline-testable via source_text)
 │   ├── normalize.py             # config normalization (pure, both-sides)
@@ -73,8 +73,8 @@ netmiko-config-audit/
 │   ├── server.py                # FastMCP glue (thin — registers the registry)
 │   ├── tools.py                 # pure tool logic; no MCP types; tested without SDK
 │   └── README.md                # MCP tool surface + install/run instructions
-└── tests/                       # 88 tests (pytest); no live gear, no network
-    ├── test_*.py                # Project 1 — 63 tests
+└── tests/                       # 99 tests (pytest); no live gear, no network
+    ├── test_*.py                # Project 1 — 74 tests
     ├── test_mcp_*.py            # MCP adapter — 25 offline + 4 SDK-gated
     └── fixtures/                # sanitized configs (RFC 5737 IPs, fake hosts, zero creds)
 ```
@@ -115,11 +115,16 @@ for you.
 
 ## Configuration
 
-1. Copy the config template:
-   ```bash
-   cp config/config.example.yaml config/config.yaml
-   ```
-   Edit it with device addresses and output paths. Point `backup_dir` and `baseline_dir` at your **separate, private** backup repo — not inside this code repo.
+1. `config/config.yaml` — two ways to set it up:
+   - **Interactive:** run `config-audit configure` — walks you through backup/baseline/report
+     locations and your device list. Validates as it goes: a location that resolves inside
+     *this* code repo is rejected (must be a separate, private repo), and a location that
+     isn't already a git working tree is rejected too (`backup`/`promote` require one) —
+     both catch real mistakes before a single device is contacted, not after. Also runs
+     automatically the first time any command needs `config.yaml` and it doesn't exist yet.
+   - **Manual:** `cp config/config.example.yaml config/config.yaml` and edit it directly.
+     Point `backup_dir`/`baseline_dir` at your **separate, private** backup repo — not
+     inside this code repo.
 2. Credentials in `secrets.env` — two ways to set them up:
    - **Interactive (first run):** just run `config-audit backup` or `config-audit report` with no `secrets.env` present — you'll be prompted for a default username/password (and optional enable secret), and the file is written for you. Passwords are entered twice and must match, and unsafe shapes (e.g. a value containing `" #"`, which python-dotenv would silently truncate) are rejected with a clear reason.
    - **Re-entering:** if `secrets.env` already exists, running `backup`/`report` again asks `Re-enter credentials? [y/N]` — answer `y` to overwrite it (e.g. after a typo), or just press Enter to leave it alone and proceed.
@@ -130,6 +135,7 @@ for you.
 ## Usage
 
 ```bash
+config-audit configure  # interactively create/replace config.yaml (see Configuration above)
 config-audit backup     # pull running-configs and commit them to the backup repo
 config-audit diff       # drift check: current backups vs. per-device baseline
 config-audit promote <DEVICE>   # review a device's drift, then approve it into the baseline
@@ -150,6 +156,12 @@ Run nightly via cron on the always-on host:
 0 2 * * *  cd /opt/netmiko-config-audit && .venv/bin/config-audit backup
 ```
 
+All the interactive setup above (`configure`, the secrets wizard, the re-entry prompt)
+detects whether a real terminal is attached before prompting. Under cron there's no
+stdin, so: if `config.yaml`/`secrets.env` already exist, it runs silently exactly like
+today; if either is missing, it fails immediately with one clear line telling you to run
+the relevant command interactively once, instead of hanging or crashing.
+
 ## Development / offline testing
 
 The collector takes an optional `source_text`, so the whole pipeline can be developed
@@ -165,7 +177,7 @@ The `diff` command is entirely file-based and needs no device at all.
 
 ## Testing
 
-88 tests cover the offline pipeline end to end (63 for the tool, 25 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
+99 tests cover the offline pipeline end to end (74 for the tool, 25 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
 
 ```bash
 pip install -e ".[dev]"          # tool + tests
@@ -190,7 +202,7 @@ drops root, running as a dedicated `appuser`.
 
 ```bash
 docker build -t netmiko-audit .                        # runtime image (default target)
-docker build --target test -t netmiko-audit:test .     # runs the 88-test suite inside the image; build fails on any failure
+docker build --target test -t netmiko-audit:test .     # runs the 99-test suite inside the image; build fails on any failure
 ```
 
 `config.yaml`, `secrets.env`, and the backup/baseline directories are gitignored and
@@ -241,7 +253,7 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Structured JSON run report
 - [x] Pre-commit config sanitizer (`sanitize_check.py`)
 - [x] Human-gated `promote` (approve a drift into the baseline)
-- [x] 88-test suite: 63 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry) + 25 MCP adapter tests
+- [x] 99-test suite: 74 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation) + 25 MCP adapter tests
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [ ] Validate collector + normalization against physical ISR/Catalyst *(the one open item before production-ready)*
