@@ -25,6 +25,36 @@ def write_config(backup_dir: Path, device_name: str, config_text: str) -> Path:
     return path
 
 
+def is_git_repo(path: Path) -> bool:
+    """True if `path` is inside a git working tree.
+
+    Used by config setup to validate backup_dir/baseline_dir before anything is
+    written -- commit_changes requires this too, but discovering it only when
+    `backup` fails deep in a subprocess call is a worse experience than catching
+    it here, before a single device is even contacted.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"],
+        capture_output=True, text=True, timeout=_GIT_TIMEOUT,
+    )
+    return result.returncode == 0
+
+
+def git_repo_root(path: Path) -> Path | None:
+    """Return the top-level directory of the git repo containing `path`, or None.
+
+    Used to check whether a proposed backup_dir/baseline_dir resolves inside this
+    same code repo -- it must be a SEPARATE, private repo instead.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, timeout=_GIT_TIMEOUT,
+    )
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.strip()).resolve()
+
+
 def commit_changes(repo_dir: Path, message: str | None = None) -> bool:
     """Stage all changes and commit. Returns True if a commit was made, False if
     there was nothing to commit (no drift since last run).

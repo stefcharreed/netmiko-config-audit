@@ -7,10 +7,10 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 ## Commands
 - Install (tool + tests): `pip install -e ".[dev]"`
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **88 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 92 run.
+- Test: `pytest tests/ -q` — expect **99 passing**; the 4 `test_mcp_server.py` tests
+  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 103 run.
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
-- CLI: `config-audit backup | diff | promote <DEVICE> | report`
+- CLI: `config-audit backup | diff | promote <DEVICE> | report | configure`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
 - Docker runtime image: `docker build -t netmiko-audit .`
 - Docker test stage (runs the real suite inside the image): `docker build --target test -t netmiko-audit:test .`
@@ -61,6 +61,34 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   enable/secret can still be blank to skip it). If you touch this, re-verify against
   the actual installed `python-dotenv` version rather than assuming — its comment/
   whitespace handling is what's being defended against, not a made-up rule.
+- **Every interactive wizard checks `_interactive()` (`sys.stdin.isatty()`) first.**
+  This is load-bearing, not optional style: cron has no stdin, and `input()`/
+  `getpass.getpass()` raise `EOFError` on it — confirmed live once already, when the
+  secrets re-entry prompt above briefly broke unattended `backup` runs. The rule for
+  any new wizard: missing file + non-interactive → fail fast with one clear line and
+  `SystemExit(1)`, never a raw traceback; existing file + non-interactive → proceed
+  silently, never prompt. Tests must monkeypatch `config_audit.cli._interactive`
+  (not `sys.stdin` directly) to force either path — see `tests/test_cli.py`'s
+  `_force_interactive` helper.
+- **`config-audit configure` builds `config.yaml` interactively** (`_run_config_wizard`
+  in `cli.py`), and `_ensure_config_file` auto-launches it only when `config.yaml` is
+  missing — unlike secrets.env, an *existing* `config.yaml` is never auto-reprompted
+  (it holds a whole device inventory, not one credential pair; nagging on every
+  command would be worse than useful). `_prompt_directory` validates `backup_dir`/
+  `baseline_dir` before writing anything: rejects a path that resolves inside this
+  same code repo (via `gitstore.git_repo_root`, comparing against `Path.cwd()`'s repo
+  root — must be a SEPARATE, private repo), and rejects a path that isn't already a
+  git working tree (via `gitstore.is_git_repo`) since `commit_changes` requires one.
+  `report_path` skips both checks (`require_git=False`) since `report.write_report`
+  never commits. Reused `gitstore.is_git_repo`/`git_repo_root` rather than
+  duplicating subprocess logic in `cli.py` — keep git subprocess calls in
+  `gitstore.py`, not scattered across modules.
+- **`config.example.yaml` must say `baseline_dir`, not `golden_dir`.** An earlier
+  draft used `golden_dir`, which parses as valid YAML but is silently ignored by
+  `inventory.load_config` (which reads `baseline_dir` specifically) — this caused a
+  real, confusing failure during hardware validation where `backup_dir` silently
+  fell back to a default nobody set. If you ever add a new `settings` key, make sure
+  the example file's key name is byte-for-byte what `inventory.py` actually reads.
 - **normalize() applies to BOTH sides** (baseline and current) before diffing.
   Normalizing one side manufactures phantom drift. Never sort lines — ACL order is
   meaningful.
