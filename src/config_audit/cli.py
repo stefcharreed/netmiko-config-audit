@@ -46,24 +46,56 @@ def _render_diff(lines: list[str]) -> Text:
 _MAX_PASSWORD_ATTEMPTS = 3
 
 
+def _invalid_secret_reason(value: str) -> str | None:
+    """Return why `value` is unsafe to write as a raw secrets.env value, or None if fine.
+
+    secrets.env is read back by python-dotenv, which silently mangles some shapes
+    instead of erroring -- confirmed: a ' #' sequence truncates everything after it
+    (treated as an inline comment), and trailing whitespace is silently stripped.
+    Both would corrupt a real credential with no visible error until a confusing
+    SSH auth failure much later.
+    """
+    if " #" in value:
+        return (
+            "contains ' #' (space then #) -- python-dotenv reads that as a comment "
+            "and would silently cut it off there"
+        )
+    if value != value.rstrip():
+        return "has trailing whitespace -- python-dotenv silently strips it when read back"
+    if "\n" in value or "\r" in value:
+        return "contains a newline -- can't be stored on a single secrets.env line"
+    return None
+
+
 def _prompt_confirmed_password(label: str, *, optional: bool = False) -> str:
-    """Prompt for a password twice and require they match; retries on mismatch.
+    """Prompt for a password twice and require they match; retries on mismatch,
+    a blank required value, or a value that secrets.env would silently corrupt.
 
     Masked input means a typo is invisible until it fails an SSH login later --
     catch it here instead. `optional=True` lets an empty first entry skip
-    confirmation entirely (used for the enable/secret prompt, which is skippable).
+    confirmation and validation entirely (used for the enable/secret prompt,
+    which is skippable).
     """
     for attempt in range(_MAX_PASSWORD_ATTEMPTS):
         value = getpass.getpass(f"{label}: ")
         if optional and not value:
             return value
-        confirm = getpass.getpass(f"Confirm {label.lower()}: ")
-        if value == confirm:
-            return value
         remaining = _MAX_PASSWORD_ATTEMPTS - attempt - 1
-        if remaining:
-            console.print(f"[red]Didn't match[/red] — {remaining} attempt(s) left.")
-    console.print("[red]Too many mismatches — aborting setup. Run the command again.[/red]")
+        suffix = f" {remaining} attempt(s) left." if remaining else ""
+
+        if not value:
+            console.print(f"[red]Can't be blank.[/red]{suffix}")
+            continue
+        confirm = getpass.getpass(f"Confirm {label.lower()}: ")
+        if value != confirm:
+            console.print(f"[red]Didn't match.[/red]{suffix}")
+            continue
+        problem = _invalid_secret_reason(value)
+        if problem:
+            console.print(f"[red]{label} {problem}.[/red]{suffix}")
+            continue
+        return value
+    console.print("[red]Too many failed attempts — aborting setup. Run the command again.[/red]")
     raise SystemExit(1)
 
 
