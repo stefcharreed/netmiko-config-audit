@@ -90,12 +90,28 @@ Git is driven via the standard library (`subprocess`) — no extra git dependenc
 
 ## Installation
 
+**Check your Python first** — `python3 -m venv` silently uses whatever `python3` resolves
+to, which on a stock Mac is often the old Apple-bundled 3.9, not 3.10+. If that's what you
+have, the failure mode is confusing: an old bundled `pip` can't even report the real
+"wrong Python version" error clearly and instead fails on an unrelated-looking editable-
+install message. Check before you start:
+
+```bash
+python3 --version   # need 3.10+; if not, install a newer one (e.g. `brew install python@3.12`
+                     # on macOS) and use that interpreter explicitly below
+```
+
 ```bash
 git clone git@github.com:stefcharreed/netmiko-config-audit.git
 cd netmiko-config-audit
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate   # or python3.12 -m venv .venv, etc.
+pip install --upgrade pip                             # old pip can't do pyproject-only editable installs
 pip install -e .          # installs deps + the `config-audit` command
 ```
+
+No newer Python available and don't want to manage one? Skip the venv entirely and use
+[Docker](#docker) instead — `docker build -t netmiko-audit .` handles the Python version
+for you.
 
 ## Configuration
 
