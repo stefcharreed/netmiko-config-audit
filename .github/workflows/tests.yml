@@ -20,7 +20,7 @@ jobs:
         # versions rather than assuming.
         python-version: ["3.10", "3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -32,7 +32,7 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build test stage (runs the real suite inside the image)
         run: docker build --target test -t netmiko-audit:test .
       - name: Build runtime image
