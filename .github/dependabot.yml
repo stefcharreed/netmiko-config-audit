@@ -1,0 +1,16 @@
+# Weekly dependency-update PRs (SECURITY_ARCHITECTURE R7 in the platform docs).
+# Bumps land as PRs to review deliberately — CI runs the full suite on each.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
