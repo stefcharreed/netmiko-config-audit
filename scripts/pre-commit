@@ -49,6 +49,17 @@ while IFS= read -r f; do
     esac
 done <<< "$staged"
 
+# 5. gitleaks — hundreds of maintained secret signatures (AWS/GitHub/GCP/high-entropy)
+#    on top of the domain-specific patterns above. Opportunistic: skipped if gitleaks
+#    isn't installed, so a fresh clone still commits. Install: brew install gitleaks
+if command -v gitleaks >/dev/null 2>&1; then
+    if ! gitleaks git --pre-commit --staged --no-banner --redact >/dev/null 2>&1; then
+        echo "BLOCK: gitleaks flagged a secret in staged changes"
+        echo "       see it: gitleaks git --pre-commit --staged --verbose"
+        fail=1
+    fi
+fi
+
 if [ "$fail" -ne 0 ]; then
     echo
     echo "Commit blocked by scripts/pre-commit. Fix the file, or if this is a"

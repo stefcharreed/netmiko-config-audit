@@ -37,5 +37,17 @@ jobs:
         run: docker build --target test -t netmiko-audit:test .
       - name: Build runtime image
         run: docker build -t netmiko-audit .
+      - name: Scan image for fixable HIGH/CRITICAL vulns (Trivy)
+        # Actionable-only gate: --ignore-unfixed means it fails ONLY for CVEs that
+        # have a fix available (bump the dep or base image), never on the permanently-
+        # unfixable base-image CVEs (calibrated 2026-07-02 against the real image:
+        # 25 HIGH / 8 CRITICAL total, all unfixable; fixable HIGH/CRITICAL = 0, green).
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: netmiko-audit
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
       - name: Sanity-check the entrypoint
         run: docker run --rm netmiko-audit --help
