@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Pre-commit gate: block secrets and unsanitized fixtures before they enter history
+# (SECURITY_ARCHITECTURE R8 in the platform docs). Git history is permanent — the
+# gate has to sit before commit, not at review time.
+#
+# Install (once per clone):  ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+set -uo pipefail
+
+fail=0
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+while IFS= read -r f; do
+    # This script's own regex literals match the patterns it scans for.
+    [ "$f" = "scripts/pre-commit" ] && continue
+
+    # 1. Real env/secrets files are never committable; only *.example variants are.
+    case "$f" in
+        *.example) ;;
+        *.env|*secrets.env)
+            echo "BLOCK: $f looks like a real secrets file (only *.example is committable)"
+            fail=1 ;;
+    esac
+
+    # 2. Every staged .cfg must pass the fixture sanitizer.
+    case "$f" in
+        *.cfg)
+            if ! PYTHONPATH=src python3 -m config_audit.sanitize_check "$f"; then
+                fail=1
+            fi ;;
+    esac
+
+    # 3. Hard secret patterns in this file's staged additions — no exceptions anywhere.
+    added=$(git diff --cached -U0 -- "$f" | command grep '^+[^+]' || true)
+    if printf '%s' "$added" | command grep -qE 'BEGIN (RSA|EC|DSA|OPENSSH)? ?PRIVATE KEY|password 7 [0-9A-Fa-f]{6,}|secret [589] \$|ghp_[A-Za-z0-9]{20,}|github_pat_|sk-ant-[A-Za-z0-9]'; then
+        echo "BLOCK: $f stages content matching a hard secret pattern (key/hash/token)"
+        fail=1
+    fi
+
+    # 4. Credential-assignment shapes — skipped for *.example and tests/ (both hold
+    #    deliberate fakes like NET_PASSWORD=changeme / hunter2).
+    case "$f" in
+        *.example|tests/*) ;;
+        *)
+            if printf '%s' "$added" | command grep -qE '(NET_PASSWORD|NET_SECRET|API_KEY|_TOKEN)=[^ <$"{}]{3}|snmp-server community [A-Za-z0-9]'; then
+                echo "BLOCK: $f stages a credential-assignment shape (PASSWORD=/SECRET=/snmp community)"
+                fail=1
+            fi ;;
+    esac
+done <<< "$staged"
+
+if [ "$fail" -ne 0 ]; then
+    echo
+    echo "Commit blocked by scripts/pre-commit. Fix the file, or if this is a"
+    echo "verified false positive, bypass ONCE with: git commit --no-verify"
+fi
+exit "$fail"
