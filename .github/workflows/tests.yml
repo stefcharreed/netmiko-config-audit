@@ -42,7 +42,7 @@ jobs:
         # have a fix available (bump the dep or base image), never on the permanently-
         # unfixable base-image CVEs (calibrated 2026-07-02 against the real image:
         # 25 HIGH / 8 CRITICAL total, all unfixable; fixable HIGH/CRITICAL = 0, green).
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.33.1
         with:
           image-ref: netmiko-audit
           scanners: vuln
