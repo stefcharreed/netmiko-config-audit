@@ -4,7 +4,7 @@ cryptography==49.0.0
 invoke==3.0.3
 markdown-it-py==3.0.0
 mdurl==0.1.2
-netmiko==4.6.0
+netmiko==4.7.0
 ntc_templates==8.1.0
 paramiko==5.0.0
 pycparser==2.23
