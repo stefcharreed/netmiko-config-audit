@@ -4,9 +4,10 @@
     diff     Compare current backups against the per-device baseline (drift check).
     report   Pull, drift-check, and emit a structured JSON summary of the run.
     promote  Bless a device's current backup as its new baseline (human-gated).
+    push     Push a device's baseline TO the device (human-gated, two confirms).
 
 Rendering lives entirely in this module — every function it calls into
-(collector, drift, report, promote, gitstore) returns plain data and never
+(collector, drift, report, promote, push, gitstore) returns plain data and never
 prints. Swapping the renderer (plain print -> rich) never touches that data,
 which is also what a later MCP/AI layer reads unchanged.
 """
@@ -509,6 +510,78 @@ def _cmd_promote(cfg, device_name: str) -> int:
     return 0
 
 
+def _find_device(cfg, device_name: str):
+    for device in cfg.devices:
+        if device.name == device_name:
+            return device
+    return None
+
+
+def _cmd_push(cfg, device_name: str) -> int:
+    """Human-gated: push a device's baseline onto the device itself.
+
+    Two separate confirms, deliberately -- push (reversible with a reload) and
+    save (not reversible) are different amounts of risk and get different gates.
+    No `--yes`/auto-approve for either, matching promote's rule (D6).
+    """
+    from . import collector, drift, push
+
+    device = _find_device(cfg, device_name)
+    if device is None:
+        console.print(f"[red]no device named[/red] {device_name} in config.yaml")
+        return 2
+
+    live = collector.fetch_running_config(device)
+    if not live.ok:
+        console.print(f"[red]couldn't reach {device_name}:[/red] {live.error}")
+        return 2
+
+    plan = push.plan_push(device_name, cfg.settings.baseline_dir, live.config_text)
+
+    if not plan.baseline_exists:
+        console.print(
+            f"[cyan]no baseline yet[/cyan] for {device_name} — nothing to push. "
+            f"Run `config-audit promote {device_name}` first to establish one."
+        )
+        return 2
+
+    if plan.no_changes:
+        console.print(f"[green]{device_name}[/green]: already matches baseline — nothing to push.")
+        return 0
+
+    console.print(f"{device_name}: live config differs from baseline —")
+    console.print(_render_diff(plan.diff_lines))
+
+    resp = input(f"\nPush baseline to {device_name}? [y/N] ").strip().lower()
+    if resp not in ("y", "yes"):
+        console.print("[dim]aborted — device unchanged.[/dim]")
+        return 1
+
+    post_push_text = push.apply_push(device, plan.config_lines)
+    baseline_text = (Path(cfg.settings.baseline_dir) / f"{device_name}.cfg").read_text(
+        encoding="utf-8"
+    )
+    post_result = drift.compare_to_baseline(device_name, post_push_text, baseline_text)
+    if post_result.has_drift:
+        console.print(
+            "[yellow]pushed, but the device still doesn't fully match the baseline:[/yellow]"
+        )
+        console.print(_render_diff(post_result.diff_lines))
+    else:
+        console.print("[green]pushed — device now matches baseline.[/green]")
+
+    save_resp = input(
+        f"\nSave this config on {device_name} so it survives a reload? [y/N] "
+    ).strip().lower()
+    if save_resp in ("y", "yes"):
+        push.save_running_config(device)
+        console.print("[green]saved.[/green]")
+    else:
+        console.print("[yellow]NOT saved[/yellow] — a reload will revert this push.")
+
+    return 1 if post_result.has_drift else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="config-audit",
@@ -526,6 +599,10 @@ def main(argv: list[str] | None = None) -> int:
         "promote", help="Promote a device's current backup to its baseline (human-gated)."
     )
     p_promote.add_argument("device", help="Device name (must match a name in config.yaml).")
+    p_push = sub.add_parser(
+        "push", help="Push a device's baseline to the device (human-gated, two confirms)."
+    )
+    p_push.add_argument("device", help="Device name (must match a name in config.yaml).")
     sub.add_parser("configure", help="Interactively create or replace config.yaml.")
 
     args = parser.parse_args(argv)
@@ -541,13 +618,15 @@ def main(argv: list[str] | None = None) -> int:
 
     _ensure_config_file(Path(args.config))
 
-    if args.command in ("backup", "report"):
+    if args.command in ("backup", "report", "push"):
         _ensure_secrets_file(Path("secrets.env"))
 
     cfg = load_config(args.config)
 
     if args.command == "promote":
         return _cmd_promote(cfg, args.device)
+    if args.command == "push":
+        return _cmd_push(cfg, args.device)
 
     dispatch = {"backup": _cmd_backup, "diff": _cmd_diff, "report": _cmd_report}
     return dispatch[args.command](cfg)
