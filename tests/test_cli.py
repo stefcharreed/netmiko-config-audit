@@ -100,6 +100,145 @@ def test_promote_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, mo
     assert baseline_file.read_text(encoding="utf-8") == before  # unchanged
 
 
+def test_push_no_baseline_is_not_pushed(tmp_path, capsys, monkeypatch):
+    """No baseline yet for the device -- push refuses rather than sending nothing
+    meaningful, and points at `promote` instead."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_clean.cfg")
+        ),
+    )
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "no baseline yet" in out.lower()
+    assert "config-audit promote" in out
+
+
+def test_push_no_changes_when_live_matches_baseline(tmp_path, capsys, monkeypatch):
+    """Live config already matches baseline -- nothing to push, no gate shown."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_clean.cfg")
+        ),
+    )
+    monkeypatch.setattr("builtins.input", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("should not prompt when there's nothing to push")
+    ))
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    assert code == 0
+    assert "nothing to push" in capsys.readouterr().out.lower()
+
+
+def test_push_aborts_on_no_at_first_gate(tmp_path, capsys, monkeypatch):
+    """Answering 'n' at the push gate exits 1 and never calls apply_push."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+
+    def _boom(*_a, **_k):
+        raise AssertionError("must not push when the first gate is declined")
+
+    monkeypatch.setattr("config_audit.push.apply_push", _boom)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "n")
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    assert code == 1
+    assert "aborted" in capsys.readouterr().out.lower()
+
+
+def test_push_confirmed_but_save_declined_leaves_device_unsaved(tmp_path, capsys, monkeypatch):
+    """Confirming the push but declining the save gate calls apply_push but not
+    save_running_config -- the two gates are independent."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+    # apply_push "succeeds" and the device now matches baseline post-push.
+    monkeypatch.setattr(
+        "config_audit.push.apply_push",
+        lambda device, config_lines: _fx_text("ISR1_baseline.cfg"),
+    )
+
+    def _boom_save(*_a, **_k):
+        raise AssertionError("must not save when the save gate is declined")
+
+    monkeypatch.setattr("config_audit.push.save_running_config", _boom_save)
+
+    inputs = iter(["y", "n"])  # confirm push, decline save
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "pushed" in out.lower()
+    assert "not saved" in out.lower()
+
+
+def test_push_confirmed_and_saved_calls_save_running_config(tmp_path, capsys, monkeypatch):
+    """Confirming both gates calls apply_push then save_running_config."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+    monkeypatch.setattr(
+        "config_audit.push.apply_push",
+        lambda device, config_lines: _fx_text("ISR1_baseline.cfg"),
+    )
+    saved = []
+    monkeypatch.setattr(
+        "config_audit.push.save_running_config", lambda device: saved.append(device.name)
+    )
+
+    inputs = iter(["y", "y"])  # confirm push, confirm save
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    assert code == 0
+    assert saved == ["ISR1"]
+    assert "saved" in capsys.readouterr().out.lower()
+
+
+def _fx_text(name: str) -> str:
+    return (FIXTURES / name).read_text(encoding="utf-8")
+
+
 def test_ensure_secrets_file_leaves_file_untouched_when_declining_reentry(tmp_path, monkeypatch):
     """Answering 'n' (or the [y/N] default) to the re-entry prompt makes no changes."""
     from config_audit.cli import _ensure_secrets_file
