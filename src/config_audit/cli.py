@@ -25,6 +25,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .gitstore import GitIdentityError
 from .inventory import load_config
 
 console = Console()
@@ -679,15 +680,19 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_config(args.config)
 
-    if args.command == "promote":
-        return _cmd_promote(cfg, args.device)
-    if args.command == "push":
-        return _cmd_push(cfg, args.device)
-    if args.command == "set-baseline":
-        return _cmd_set_baseline(cfg, args.device, args.file)
+    try:
+        if args.command == "promote":
+            return _cmd_promote(cfg, args.device)
+        if args.command == "push":
+            return _cmd_push(cfg, args.device)
+        if args.command == "set-baseline":
+            return _cmd_set_baseline(cfg, args.device, args.file)
 
-    dispatch = {"backup": _cmd_backup, "diff": _cmd_diff, "report": _cmd_report}
-    return dispatch[args.command](cfg)
+        dispatch = {"backup": _cmd_backup, "diff": _cmd_diff, "report": _cmd_report}
+        return dispatch[args.command](cfg)
+    except GitIdentityError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
 
 
 if __name__ == "__main__":
