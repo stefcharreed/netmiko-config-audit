@@ -20,6 +20,16 @@ from pathlib import Path
 _GIT_TIMEOUT = 30  # seconds
 
 
+class GitIdentityError(RuntimeError):
+    """`git commit` failed because user.name/user.email aren't configured.
+
+    A raw CalledProcessError here reads as a tool crash, not a one-line fix --
+    this bit a real user during hardware validation (backup/promote both failed
+    with exit 128 the first time they pointed the tool at a fresh backup repo).
+    Caught and re-raised with the exact fix instead of a bare traceback.
+    """
+
+
 def write_config(backup_dir: Path, device_name: str, config_text: str) -> Path:
     """Write a device's running-config to backup_dir/<device>.cfg and return the path.
 
@@ -97,8 +107,20 @@ def commit_changes(repo_dir: Path, message: str | None = None) -> bool:
 
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     message = message or f"Config backup — {stamp}"
-    subprocess.run(
-        ["git", "-C", str(repo_dir), "commit", "-m", message, "--", "."],
-        check=True, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
-    )
+    try:
+        subprocess.run(
+            ["git", "-C", str(repo_dir), "commit", "-m", message, "--", "."],
+            check=True, capture_output=True, text=True, timeout=_GIT_TIMEOUT,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr or ""
+        if "Please tell me who you are" in stderr or "user.email" in stderr:
+            raise GitIdentityError(
+                f"git commit failed in {repo_dir} — no user.name/user.email "
+                f"configured for this repo. Fix with:\n"
+                f'  git -C {repo_dir} config user.email "you@example.com"\n'
+                f'  git -C {repo_dir} config user.name "Your Name"\n'
+                f"(or set both globally: `git config --global user.email ...`)"
+            ) from exc
+        raise
     return True

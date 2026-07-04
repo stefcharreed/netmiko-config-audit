@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from config_audit.gitstore import write_config, commit_changes
+from config_audit.gitstore import GitIdentityError, commit_changes, write_config
 
 
 def _git_init(path):
@@ -91,6 +91,59 @@ def test_commit_scoped_to_subdirectory_ignores_sibling_changes(tmp_path):
         capture_output=True, text=True, check=True,
     ).stdout
     assert "baselines/ISR1.cfg" in status
+
+
+def test_commit_raises_clear_error_when_identity_unconfigured(tmp_path, monkeypatch):
+    """When git's commit step fails with its 'who are you' error, commit_changes
+    raises GitIdentityError with the exact fix, not a bare CalledProcessError
+    traceback. Regression for the exit-128 crash hit during hardware validation
+    on a fresh backup repo (see CLAUDE.md).
+
+    Real git's identity-guessing is environment-dependent (it can synthesize one
+    from the OS account on some machines, masking the failure) -- so this tests
+    the translation logic directly by faking just the `commit` subprocess call,
+    letting init/add/diff run for real.
+    """
+    _git_init(tmp_path)
+    write_config(tmp_path, "ISR1", "hostname ISR1\n")
+
+    real_run = subprocess.run
+
+    def _fake_run(cmd, *args, **kwargs):
+        if "commit" in cmd:
+            raise subprocess.CalledProcessError(
+                128, cmd, output="",
+                stderr="*** Please tell me who you are.\n\nRun\n\n  git config "
+                       "user.email \"you@example.com\"\n  git config user.name "
+                       "\"Your Name\"\n",
+            )
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("config_audit.gitstore.subprocess.run", _fake_run)
+
+    with pytest.raises(GitIdentityError) as exc_info:
+        commit_changes(tmp_path, message="should fail clearly")
+    assert "user.email" in str(exc_info.value)
+    assert str(tmp_path) in str(exc_info.value)
+
+
+def test_commit_reraises_other_git_failures_unchanged(tmp_path, monkeypatch):
+    """A git commit failure that ISN'T the identity issue still propagates as a
+    plain CalledProcessError -- only the specific 'who are you' case is translated."""
+    _git_init(tmp_path)
+    write_config(tmp_path, "ISR1", "hostname ISR1\n")
+
+    real_run = subprocess.run
+
+    def _fake_run(cmd, *args, **kwargs):
+        if "commit" in cmd:
+            raise subprocess.CalledProcessError(1, cmd, output="", stderr="some other failure")
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr("config_audit.gitstore.subprocess.run", _fake_run)
+
+    with pytest.raises(subprocess.CalledProcessError):
+        commit_changes(tmp_path, message="should fail")
 
 
 def test_commit_scoped_reports_no_changes_when_only_sibling_has_staged_edits(tmp_path):
