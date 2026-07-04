@@ -70,8 +70,27 @@ def test_diff_detects_drift_returns_one(tmp_path, capsys):
     """A drifted backup makes diff print DRIFT and exit 1."""
     config = _project(tmp_path, backup_fixture="ISR1_current_drift.cfg")
     code = main(["-c", str(config), "diff"])
+    out = capsys.readouterr().out
     assert code == 1
-    assert "DRIFT" in capsys.readouterr().out
+    assert "DRIFT" in out
+
+
+def test_diff_suggests_push_when_drift_found(tmp_path, capsys):
+    """Drift found -- diff points at `push` as the next command, but never runs it."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_drift.cfg")
+    code = main(["-c", str(config), "diff"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "config-audit push ISR1" in out
+
+
+def test_diff_no_drift_does_not_suggest_push(tmp_path, capsys):
+    """No drift -- nothing to reconcile, so no push suggestion is printed."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    code = main(["-c", str(config), "diff"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "config-audit push" not in out
 
 
 def test_diff_no_baseline_is_distinct_from_drift(tmp_path, capsys):

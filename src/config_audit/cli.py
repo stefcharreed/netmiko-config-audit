@@ -407,6 +407,14 @@ def _cmd_diff(cfg) -> int:
     console.print(table)
     for name, lines in diffs.items():
         console.print(Panel(_render_diff(lines), title=name, border_style="yellow"))
+    if diffs:
+        # Only a suggestion, never auto-run: push is a live device write and stays
+        # human-initiated, same as promote -- diff just points at the next command.
+        console.print(
+            "[dim]To reconcile: "
+            + ", ".join(f"`config-audit push {name}`" for name in diffs)
+            + "[/dim]"
+        )
     if no_baseline:
         console.print(
             Panel(
