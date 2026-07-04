@@ -119,6 +119,62 @@ def test_promote_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, mo
     assert baseline_file.read_text(encoding="utf-8") == before  # unchanged
 
 
+def test_set_baseline_missing_file_returns_two(tmp_path, capsys):
+    """A source file that doesn't exist is rejected before any diff/prompt."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    missing = tmp_path / "does-not-exist.cfg"
+
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(missing)])
+    assert code == 2
+    assert "no such file" in capsys.readouterr().out.lower()
+
+
+def test_set_baseline_ztp_establishes_initial_baseline(tmp_path, capsys, monkeypatch):
+    """ZTP path: no baseline yet, author one straight from a template file, no device
+    ever contacted -- confirming writes the file and commits it."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    template = FIXTURES / "ISR1_baseline.cfg"
+    subprocess.run(["git", "init", "-q", str(tmp_path / "baselines")], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path / "baselines"), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path / "baselines"), "config", "user.name", "Test"], check=True
+    )
+
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(template)])
+
+    assert code == 0
+    baseline_file = tmp_path / "baselines" / "ISR1.cfg"
+    assert baseline_file.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+    assert "baseline updated" in capsys.readouterr().out.lower()
+
+
+def test_set_baseline_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, monkeypatch):
+    """Answering 'n' exits 1 and does not create/modify the baseline file."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    template = FIXTURES / "ISR1_baseline.cfg"
+
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "n")
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(template)])
+
+    assert code == 1
+    assert "aborted" in capsys.readouterr().out.lower()
+    assert not (tmp_path / "baselines" / "ISR1.cfg").exists()
+
+
+def test_set_baseline_matching_existing_is_nothing_to_do(tmp_path, capsys):
+    """Source file identical to the existing baseline -- no prompt, exits 0."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    template = FIXTURES / "ISR1_baseline.cfg"  # same content _project wrote as the baseline
+
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(template)])
+    assert code == 0
+    assert "nothing to do" in capsys.readouterr().out.lower()
+
+
 def test_push_no_baseline_is_not_pushed(tmp_path, capsys, monkeypatch):
     """No baseline yet for the device -- push refuses rather than sending nothing
     meaningful, and points at `promote` instead."""

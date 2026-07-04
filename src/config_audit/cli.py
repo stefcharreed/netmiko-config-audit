@@ -3,13 +3,14 @@
     backup   Pull running-configs from all devices and commit them to git.
     diff     Compare current backups against the per-device baseline (drift check).
     report   Pull, drift-check, and emit a structured JSON summary of the run.
-    promote  Bless a device's current backup as its new baseline (human-gated).
-    push     Push a device's baseline TO the device (human-gated, two confirms).
+    promote      Bless a device's current backup as its new baseline (human-gated).
+    push         Push a device's baseline TO the device (human-gated, two confirms).
+    set-baseline Author a device's baseline from a file, no live pull needed (ZTP).
 
 Rendering lives entirely in this module — every function it calls into
-(collector, drift, report, promote, push, gitstore) returns plain data and never
-prints. Swapping the renderer (plain print -> rich) never touches that data,
-which is also what a later MCP/AI layer reads unchanged.
+(collector, drift, report, promote, push, set_baseline, gitstore) returns plain
+data and never prints. Swapping the renderer (plain print -> rich) never touches
+that data, which is also what a later MCP/AI layer reads unchanged.
 """
 from __future__ import annotations
 
@@ -518,6 +519,47 @@ def _cmd_promote(cfg, device_name: str) -> int:
     return 0
 
 
+def _cmd_set_baseline(cfg, device_name: str, source_path: str) -> int:
+    """Human-gated: author a device's baseline from a config file, with no live
+    device pull first -- the ZTP path. File-only, same risk class as promote/diff;
+    never touches a device, so no secrets/live gear needed.
+    """
+    from . import gitstore, promote, set_baseline
+
+    source = Path(source_path)
+    if not source.exists():
+        console.print(f"[red]no such file:[/red] {source}")
+        return 2
+
+    plan = set_baseline.plan_set_baseline(device_name, source, cfg.settings.baseline_dir)
+
+    if plan.is_initial:
+        console.print(f"{device_name}: no baseline yet — this establishes it from {source}.")
+    elif not plan.has_drift:
+        console.print(
+            f"[green]{device_name}[/green]: baseline already matches {source} — nothing to do."
+        )
+        return 0
+    else:
+        console.print(f"{device_name}: {source} differs from the current baseline —")
+
+    console.print(_render_diff(plan.diff_lines))
+
+    verb = "Establish baseline" if plan.is_initial else "Overwrite the baseline"
+    resp = input(f"\n{verb} for {device_name} from {source}? [y/N] ").strip().lower()
+    if resp not in ("y", "yes"):
+        console.print("[dim]aborted — baseline unchanged.[/dim]")
+        return 1
+
+    path = promote.apply_promotion(device_name, plan.source_text, cfg.settings.baseline_dir)
+    committed = gitstore.commit_changes(
+        cfg.settings.baseline_dir, message=f"Set baseline (authored) — {device_name}"
+    )
+    console.print(f"[green]baseline updated:[/green] {path}")
+    console.print("committed" if committed else "written (git reported no change)")
+    return 0
+
+
 def _find_device(cfg, device_name: str):
     for device in cfg.devices:
         if device.name == device_name:
@@ -611,6 +653,12 @@ def main(argv: list[str] | None = None) -> int:
         "push", help="Push a device's baseline to the device (human-gated, two confirms)."
     )
     p_push.add_argument("device", help="Device name (must match a name in config.yaml).")
+    p_set_baseline = sub.add_parser(
+        "set-baseline",
+        help="Author a device's baseline from a config file, no live pull needed (ZTP).",
+    )
+    p_set_baseline.add_argument("device", help="Device name (must match a name in config.yaml).")
+    p_set_baseline.add_argument("file", help="Path to the config file/template to use.")
     sub.add_parser("configure", help="Interactively create or replace config.yaml.")
 
     args = parser.parse_args(argv)
@@ -635,6 +683,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_promote(cfg, args.device)
     if args.command == "push":
         return _cmd_push(cfg, args.device)
+    if args.command == "set-baseline":
+        return _cmd_set_baseline(cfg, args.device, args.file)
 
     dispatch = {"backup": _cmd_backup, "diff": _cmd_diff, "report": _cmd_report}
     return dispatch[args.command](cfg)
