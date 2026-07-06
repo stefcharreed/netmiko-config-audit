@@ -57,6 +57,24 @@ def _render_diff(lines: list[str]) -> Text:
     return text
 
 
+def _render_push_commands(lines: list[str], removal_indices: set[int]) -> Text:
+    """Render the exact commands `push` is about to send, in order.
+
+    removal_indices marks lines push *synthesized* to reconcile a child the
+    device has that the baseline doesn't (see push._build_config_lines) --
+    not just any line that happens to start with `no`. The baseline itself
+    legitimately has plenty of those (`no ip domain lookup`, `no shutdown`),
+    and those must render as ordinary lines, not flagged removals.
+    """
+    text = Text()
+    for i, line in enumerate(lines):
+        is_removal = i in removal_indices
+        style = "red" if is_removal else "green"
+        prefix = "- " if is_removal else "+ "
+        text.append(prefix + line.strip() + "\n", style=style)
+    return text
+
+
 _MAX_PASSWORD_ATTEMPTS = 3
 
 
@@ -603,7 +621,15 @@ def _cmd_push(cfg, device_name: str) -> int:
     console.print(f"{device_name}: live config differs from baseline —")
     console.print(_render_diff(plan.diff_lines))
 
-    resp = input(f"\nPush baseline to {device_name}? [y/N] ").strip().lower()
+    if plan.removal_indices:
+        console.print(
+            f"\n[yellow]{len(plan.removal_indices)} line(s) will be explicitly "
+            f"removed[/yellow] from {device_name} (device has these, baseline doesn't):"
+        )
+    console.print("\nExact commands to be sent:")
+    console.print(_render_push_commands(plan.config_lines, plan.removal_indices))
+
+    resp = input(f"Push baseline to {device_name}? [y/N] ").strip().lower()
     if resp not in ("y", "yes"):
         console.print("[dim]aborted — device unchanged.[/dim]")
         return 1
