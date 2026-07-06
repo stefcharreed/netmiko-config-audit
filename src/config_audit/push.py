@@ -41,6 +41,7 @@ class PushPlan:
     device: str
     baseline_exists: bool
     config_lines: list[str]   # exact lines that would be sent, in order
+    removal_indices: set[int]  # positions in config_lines that are synthesized `no` removals
     diff_lines: list[str]     # unified diff: live -> baseline, for human review
     no_changes: bool          # live already matches baseline (or no baseline exists)
 
@@ -75,7 +76,7 @@ def _invert(child_line: str) -> str:
     return f"no {stripped}"
 
 
-def _build_config_lines(baseline_text: str, live_config: str) -> list[str]:
+def _build_config_lines(baseline_text: str, live_config: str) -> tuple[list[str], set[int]]:
     """Reconcile live -> baseline: adds (baseline's lines, sent as today) plus
     mechanical per-block removes for child lines the device has that the
     baseline doesn't -- e.g. a stale ACL entry or a changed `description`.
@@ -87,11 +88,18 @@ def _build_config_lines(baseline_text: str, live_config: str) -> list[str]:
     different risk class (an ACL might still be referenced elsewhere; IOS
     won't even let you `no` a physical interface) and stays a human decision
     via `promote`/manual cleanup, same as before this change.
+
+    Returns (config_lines, removal_indices) -- removal_indices are positions
+    of SYNTHESIZED `no` lines, not just any line that happens to start with
+    `no` (the baseline legitimately has its own, e.g. `no ip domain lookup`,
+    `no shutdown` -- those are additive lines, not removals, and must not be
+    flagged as such to a human reviewing the plan).
     """
     base_blocks = _parse_blocks(normalize(baseline_text))
     live_blocks = dict(_parse_blocks(normalize(live_config)))
 
     config_lines: list[str] = []
+    removal_indices: set[int] = set()
     for parent, base_children in base_blocks:
         config_lines.append(parent)
         live_children = live_blocks.get(parent)
@@ -99,9 +107,10 @@ def _build_config_lines(baseline_text: str, live_config: str) -> list[str]:
             base_child_set = {c.strip() for c in base_children}
             for live_child in live_children:
                 if live_child.strip() not in base_child_set:
+                    removal_indices.add(len(config_lines))
                     config_lines.append(_invert(live_child))
         config_lines.extend(base_children)
-    return config_lines
+    return config_lines, removal_indices
 
 
 def plan_push(device_name: str, baseline_dir: Path, live_config: str) -> PushPlan:
@@ -112,7 +121,7 @@ def plan_push(device_name: str, baseline_dir: Path, live_config: str) -> PushPla
     if not baseline_path.exists():
         return PushPlan(
             device=device_name, baseline_exists=False,
-            config_lines=[], diff_lines=[], no_changes=True,
+            config_lines=[], removal_indices=set(), diff_lines=[], no_changes=True,
         )
 
     baseline_text = baseline_path.read_text(encoding="utf-8")
@@ -120,13 +129,14 @@ def plan_push(device_name: str, baseline_dir: Path, live_config: str) -> PushPla
     if not result.has_drift:
         return PushPlan(
             device=device_name, baseline_exists=True,
-            config_lines=[], diff_lines=[], no_changes=True,
+            config_lines=[], removal_indices=set(), diff_lines=[], no_changes=True,
         )
 
-    config_lines = _build_config_lines(baseline_text, live_config)
+    config_lines, removal_indices = _build_config_lines(baseline_text, live_config)
     return PushPlan(
         device=device_name, baseline_exists=True,
-        config_lines=config_lines, diff_lines=result.diff_lines, no_changes=False,
+        config_lines=config_lines, removal_indices=removal_indices,
+        diff_lines=result.diff_lines, no_changes=False,
     )
 
 

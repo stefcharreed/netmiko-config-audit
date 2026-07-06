@@ -244,6 +244,40 @@ def test_push_aborts_on_no_at_first_gate(tmp_path, capsys, monkeypatch):
     assert "aborted" in capsys.readouterr().out.lower()
 
 
+def test_push_shows_exact_commands_and_flags_only_synthesized_removals(
+    tmp_path, capsys, monkeypatch
+):
+    """Before the confirm prompt, push must show the human the literal commands
+    it's about to send -- including any synthesized `no` reconciliation lines,
+    flagged as removals. A baseline line that's legitimately `no ...` on its
+    own (e.g. `no ip domain lookup`) must NOT be flagged as a removal -- only
+    lines push itself generated to undo a stale child on the device."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "n")  # decline, just inspect output
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "Exact commands to be sent" in out
+    # synthesized removal -- must be flagged
+    assert "- no permit tcp host 198.51.100.51 any eq 443" in out
+    assert "will be explicitly" in out
+    # legitimate baseline line that happens to start with `no` -- must render
+    # as an ordinary sent line, not a flagged removal
+    assert "+ no ip domain lookup" in out
+    assert "- no ip domain lookup" not in out
+
+
 def test_push_confirmed_but_save_declined_leaves_device_unsaved(tmp_path, capsys, monkeypatch):
     """Confirming the push but declining the save gate calls apply_push but not
     save_running_config -- the two gates are independent."""
