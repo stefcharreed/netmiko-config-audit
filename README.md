@@ -172,7 +172,7 @@ the only place rendering happens, so a future MCP/AI layer reads the same unstyl
 
 `push <DEVICE>` pulls the device's live running-config, diffs it against the baseline, and — on confirmation — sends the baseline to the device over SSH. It uses **two separate confirms**, not one: the first sends the config (still reversible with a reload if you decline the second), the second is a distinct `Save this config ... so it survives a reload?` prompt (`wr mem`). No `--yes` for either, same rule as `promote`.
 
-**Known limitation — push only adds, it never removes.** Cisco IOS config is imperative, not declarative: `push` sends whatever's in the baseline, but if the device has something the baseline doesn't mention (e.g. an out-of-band `description` someone typed by hand), sending the baseline again does not remove it — that requires an explicit `no <command>` on the device, which `push` does not compute in v1. After a push, the tool re-pulls the device's config and tells you honestly if it still doesn't fully match the baseline, rather than claiming success — a remaining diff after push usually means exactly this case (device has an extra line the baseline doesn't have), not a failed push. See [Troubleshooting](#troubleshooting).
+**Mechanical child-line removes, whole-block removes stay manual.** Cisco IOS config is imperative, not declarative: a bare resend of the baseline doesn't remove something the device has that the baseline doesn't mention — a stale ACL entry, an out-of-band `description` someone typed by hand — that needs an explicit `no <command>`. Inside a parent block that exists on **both** sides (e.g. the same `interface`/`ip access-list`), `push` now computes that automatically: any child line the device has that the baseline doesn't gets `no`'d before the baseline's own children are sent, so a changed `description` or a stray extra ACL `permit` is actually reconciled, not just re-added on top. A **whole extra parent block** the device has that the baseline never mentions at all (a whole extra `interface`, a whole extra ACL) is never auto-removed — deleting an entire block is a different risk class (an ACL might still be referenced elsewhere; IOS won't even let you `no` a physical interface), so that stays a human decision via `promote` or manual cleanup on the device. After a push, the tool re-pulls the device's config and tells you honestly if it still doesn't fully match the baseline, rather than claiming success — a remaining `+` diff line after push usually means exactly this whole-block case, not a failed push. See [Troubleshooting](#troubleshooting).
 
 ### `set-baseline` — author a baseline for zero-touch provisioning
 
@@ -272,14 +272,17 @@ you're on a version before this was added, you'll see a Python traceback ending 
 `CalledProcessError` instead.
 
 **After `push`, the tool says "pushed, but the device still doesn't fully match the
-baseline" and shows a `+` diff line.** This is not a bug — `push` only *adds* config
-present in the baseline; it can't remove something the device has that the baseline
-doesn't mention (Cisco IOS is imperative, not declarative — removing a line requires an
-explicit `no <command>`, not just omitting it). A `+` line in the post-push diff means
-"device has this, baseline doesn't" — remove it by hand on the device, or if it should
-stay, fold it into the baseline with `promote`. A `-` line (baseline has it, device
-doesn't) would mean the push genuinely failed to apply something — that's the case
-worth investigating further.
+baseline" and shows a `+` diff line.** This is not a bug. `push` auto-reconciles child
+lines within a block that exists on both sides (e.g. a changed `description`, a stale
+ACL `permit` — those get an explicit `no` before the baseline's own lines are sent), but
+it never auto-removes a **whole extra block** the device has that the baseline doesn't
+mention at all (Cisco IOS is imperative, not declarative, and deleting a whole block —
+say, a whole extra ACL — is a different risk class than fixing one line inside a block
+both sides agree exists). A `+` line surviving in the post-push diff means exactly that:
+a whole extra block on the device — remove it by hand, or if it should stay, fold it
+into the baseline with `promote`. A `-` line (baseline has it, device doesn't) would mean
+the push genuinely failed to apply something — that's the case worth investigating
+further.
 
 ## Security
 
@@ -315,7 +318,7 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [x] Validated collector + normalization against physical Cisco gear — live SSH pull, initial baseline via `promote`, real drift correctly detected, clean `diff` after
-- [x] Human-gated `push` (send a device's baseline back to the device) and `set-baseline` (author a baseline from a file for zero-touch provisioning) — validated `push` end to end against a physical switch, including the additive-only limitation documented in [Troubleshooting](#troubleshooting)
+- [x] Human-gated `push` (send a device's baseline back to the device) and `set-baseline` (author a baseline from a file for zero-touch provisioning) — validated `push` end to end against a physical switch; mechanical child-line `no`-reconciliation added afterward for the remaining-diff case, whole-block removal still stays manual by design (documented in [Troubleshooting](#troubleshooting))
 - [ ] `set-baseline`/ZTP path validated against an actual blank/factory-default switch
 - [ ] Scheduled nightly run on the always-on host
 - [ ] **Platform stage 2:** syslog event pipeline (actual behavior) — not started, no repo yet
