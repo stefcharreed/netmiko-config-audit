@@ -153,6 +153,7 @@ for you.
 ```bash
 config-audit configure  # interactively create/replace config.yaml (see Configuration above)
 config-audit backup     # pull running-configs and commit them to the backup repo
+config-audit backup <DEVICE>        # same, but only pull/commit this one device
 config-audit diff       # drift check: current backups vs. per-device baseline
 config-audit promote <DEVICE>       # review a device's drift, then approve it into the baseline
 config-audit push <DEVICE>          # push a device's baseline back onto the device itself

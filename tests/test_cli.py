@@ -58,6 +58,102 @@ def test_missing_subcommand_exits_with_code_2(capsys):
     assert exit_info.value.code == 2
 
 
+def _two_device_project(tmp_path: Path) -> Path:
+    """Build a temp project with two devices, both with clean backups/baselines,
+    for testing that `backup <device>` only touches the one named."""
+    backup, baseline, reports = tmp_path / "backups", tmp_path / "baselines", tmp_path / "reports"
+    backup.mkdir()
+    baseline.mkdir()
+    subprocess.run(["git", "init", "-q", str(backup)], check=True)
+    subprocess.run(["git", "-C", str(backup), "config", "user.email", "t@example.test"], check=True)
+    subprocess.run(["git", "-C", str(backup), "config", "user.name", "Test"], check=True)
+    for name in ("ISR1", "ISR2"):
+        (backup / f"{name}.cfg").write_text(
+            (FIXTURES / "ISR1_current_clean.cfg").read_text(), encoding="utf-8"
+        )
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "settings:\n"
+        f"  backup_dir: {backup}\n"
+        f"  baseline_dir: {baseline}\n"
+        f"  report_path: {reports}\n"
+        "devices:\n"
+        "  - name: ISR1\n"
+        "    host: 192.0.2.1\n"
+        "    device_type: cisco_ios\n"
+        "  - name: ISR2\n"
+        "    host: 192.0.2.2\n"
+        "    device_type: cisco_ios\n",
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_backup_with_device_name_only_collects_that_device(tmp_path, capsys, monkeypatch):
+    """`backup ISR2` must only pull/write ISR2 -- ISR1 is untouched, even though
+    it's also in config.yaml."""
+    config = _two_device_project(tmp_path)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    collected_names = []
+
+    def _fake_collect_all(devices, source_texts=None):
+        from config_audit.collector import CollectionResult
+
+        collected_names.extend(d.name for d in devices)
+        return [
+            CollectionResult(device=d.name, ok=True, config_text="hostname X\n")
+            for d in devices
+        ]
+
+    monkeypatch.setattr("config_audit.collector.collect_all", _fake_collect_all)
+
+    code = main(["-c", str(config), "backup", "ISR2"])
+    assert code == 0
+    assert collected_names == ["ISR2"]
+    assert "ISR2" in capsys.readouterr().out
+
+
+def test_backup_with_no_device_name_collects_all_devices(tmp_path, monkeypatch):
+    """Plain `backup` (no device argument) keeps backing up every device --
+    the new argument is additive, not a behavior change for the default path."""
+    config = _two_device_project(tmp_path)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    collected_names = []
+
+    def _fake_collect_all(devices, source_texts=None):
+        from config_audit.collector import CollectionResult
+
+        collected_names.extend(d.name for d in devices)
+        return [
+            CollectionResult(device=d.name, ok=True, config_text="hostname X\n")
+            for d in devices
+        ]
+
+    monkeypatch.setattr("config_audit.collector.collect_all", _fake_collect_all)
+
+    code = main(["-c", str(config), "backup"])
+    assert code == 0
+    assert sorted(collected_names) == ["ISR1", "ISR2"]
+
+
+def test_backup_unknown_device_name_errors(tmp_path, capsys, monkeypatch):
+    """`backup NOPE` for a device not in config.yaml fails clearly instead of
+    silently backing up nothing or crashing."""
+    config = _two_device_project(tmp_path)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    def _boom(*_a, **_k):
+        raise AssertionError("must not attempt to collect for an unknown device")
+
+    monkeypatch.setattr("config_audit.collector.collect_all", _boom)
+
+    code = main(["-c", str(config), "backup", "NOPE"])
+    assert code == 2
+    assert "no device named" in capsys.readouterr().out.lower()
+
+
 def test_diff_in_sync_returns_zero(tmp_path, capsys):
     """When backup matches baseline, diff reports the device ok and exits 0."""
     config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
