@@ -6,7 +6,7 @@ A Python tool that pulls running-configs from Cisco devices over SSH, version-co
 
 > [![tests](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml)
 
-> **Status:** ✅ v1.1 — feature-complete and validated against real hardware. The full pipeline (collect → normalize → drift → promote → push → report) is covered by a 127-test suite against sanitized fixtures (plus SDK-gated MCP wiring tests), and has now also been run end-to-end against a physical Cisco switch: live SSH pull, an initial baseline established via `promote`, a real config change correctly detected as drift, `push` sending the baseline back to the device with an accurate post-push drift re-check, and an independent save confirm. See [Troubleshooting](#troubleshooting) for real gotchas hit along the way, and the [Roadmap](#roadmap).
+> **Status:** ✅ v1.1 — feature-complete and validated against real hardware. The full pipeline (collect → normalize → drift → promote → push → report) is covered by a 137-test suite against sanitized fixtures (plus SDK-gated MCP wiring tests), and has now also been run end-to-end against a physical Cisco switch: live SSH pull, an initial baseline established via `promote`, a real config change correctly detected as drift, `push` sending the baseline back to the device — including its mechanical child-line `no`-reconciliation, confirmed reconciling cleanly with no residual diff — with an accurate post-push drift re-check and an independent save confirm. `set-baseline` (the ZTP path) is implemented and unit-tested but not yet run against real gear — see the [Roadmap](#roadmap). See [Troubleshooting](#troubleshooting) for real gotchas hit along the way.
 
 ## Overview
 
@@ -83,7 +83,7 @@ netmiko-config-audit/
 │   ├── server.py                # FastMCP glue (thin — registers the registry)
 │   ├── tools.py                 # pure tool logic; no MCP types; tested without SDK
 │   └── README.md                # MCP tool surface + install/run instructions
-└── tests/                       # 127 tests (pytest); no live gear, no network
+└── tests/                       # 137 tests (pytest); no live gear, no network
     ├── test_*.py                # Project 1
     ├── test_mcp_*.py            # MCP adapter — offline + SDK-gated
     └── fixtures/                # sanitized configs (RFC 5737 IPs, fake hosts, zero creds)
@@ -206,7 +206,7 @@ The `diff` command is entirely file-based and needs no device at all.
 
 ## Testing
 
-108 tests cover the offline pipeline end to end (80 for the tool, 28 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
+137 tests cover the offline pipeline end to end (109 for the tool, 28 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
 
 ```bash
 pip install -e ".[dev]"          # tool + tests
@@ -231,7 +231,7 @@ drops root, running as a dedicated `appuser`.
 
 ```bash
 docker build -t netmiko-audit .                        # runtime image (default target)
-docker build --target test -t netmiko-audit:test .     # runs the 108-test suite inside the image; build fails on any failure
+docker build --target test -t netmiko-audit:test .     # runs the 137-test suite inside the image; build fails on any failure
 ```
 
 `config.yaml`, `secrets.env`, and the backup/baseline directories are gitignored and
@@ -315,12 +315,13 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Structured JSON run report
 - [x] Pre-commit config sanitizer (`sanitize_check.py`)
 - [x] Human-gated `promote` (approve a drift into the baseline)
-- [x] 108-test suite: 80 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression) + 28 MCP adapter tests (list_devices, get_drift, get_drift_all, plan_promotion, get_config, promote_baseline, backup_now)
+- [x] 137-test suite: 109 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression, push's mechanical child-line reconciliation + CLI command preview, single-device `backup`) + 28 MCP adapter tests (list_devices, get_drift, get_drift_all, plan_promotion, get_config, promote_baseline, backup_now)
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [x] Validated collector + normalization against physical Cisco gear — live SSH pull, initial baseline via `promote`, real drift correctly detected, clean `diff` after
-- [x] Human-gated `push` (send a device's baseline back to the device) and `set-baseline` (author a baseline from a file for zero-touch provisioning) — validated `push` end to end against a physical switch; mechanical child-line `no`-reconciliation added afterward for the remaining-diff case, whole-block removal still stays manual by design (documented in [Troubleshooting](#troubleshooting))
-- [ ] `set-baseline`/ZTP path validated against an actual blank/factory-default switch
+- [x] Human-gated `push` (send a device's baseline back to the device), including mechanical child-line `no`-reconciliation (a stale device-only ACL entry or changed `description` is now explicitly reversed, not just re-added on top) — validated end to end against a physical switch, reconciling cleanly with no residual diff; whole-block removal still stays manual by design (documented in [Troubleshooting](#troubleshooting))
+- [x] `config-audit backup <DEVICE>` — back up a single device without touching the rest of the fleet (unit/CLI-tested; not yet run against real gear)
+- [ ] `set-baseline` (author a baseline from a file for zero-touch provisioning) — implemented and unit-tested, but **not yet validated against an actual blank/factory-default switch**
 - [ ] Scheduled nightly run on the always-on host
 - [ ] **Platform stage 2:** syslog event pipeline (actual behavior) — not started, no repo yet
 - [ ] **Platform stage 3:** AI correlation layer — composes this tool's MCP server with a CCNP-grounded knowledge base to diagnose real network problems end-to-end. In progress in a private repo, not described here to avoid two copies of the same plan drifting out of sync — [message me on LinkedIn](https://www.linkedin.com/in/stefan-c-reed/) if you want to know more.
