@@ -5,7 +5,7 @@ the human gates and rendering live in the CLI.
 """
 from pathlib import Path
 
-from config_audit.push import plan_push
+from config_audit.push import _build_config_lines, plan_push
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -82,6 +82,79 @@ def test_extra_acl_line_on_device_gets_explicit_no(tmp_path):
     parent_idx = lines.index("ip access-list extended MGMT-IN")
     no_idx = lines.index("no permit tcp host 198.51.100.51 any eq 443")
     assert parent_idx < no_idx
+
+
+def test_preexisting_baseline_no_lines_are_never_flagged_as_removals():
+    """A baseline can legitimately contain its own `no ...` child lines (`no
+    shutdown` to bring an interface up, `no ip proxy-arp` to disable a
+    feature). Those must never end up in removal_indices -- only lines push
+    itself synthesized to reconcile a device-only child count as removals."""
+    baseline = (
+        "interface GigabitEthernet0/0/1\n"
+        " description LAN-SEGMENT-A\n"
+        " no shutdown\n"
+    )
+    live = baseline  # identical -- nothing for push to reconcile
+
+    lines, removal_indices = _build_config_lines(baseline, live)
+    assert removal_indices == set()
+    assert " no shutdown" in lines
+
+
+def test_removing_a_device_only_no_line_inverts_correctly_not_double_negated():
+    """The device has an explicit `no ip proxy-arp` under an interface the
+    baseline shares but doesn't mention that line for. Reconciling it means
+    turning the feature back on -- `ip proxy-arp`, not `no no ip proxy-arp`.
+    The baseline's own unrelated `no shutdown` child must be left alone and
+    not confused with the synthesized removal."""
+    baseline = (
+        "interface GigabitEthernet0/0/1\n"
+        " description LAN-SEGMENT-A\n"
+        " no shutdown\n"
+    )
+    live = (
+        "interface GigabitEthernet0/0/1\n"
+        " description LAN-SEGMENT-A\n"
+        " no shutdown\n"
+        " no ip proxy-arp\n"
+    )
+
+    lines, removal_indices = _build_config_lines(baseline, live)
+    assert len(removal_indices) == 1
+    removal_idx = next(iter(removal_indices))
+    assert lines[removal_idx] == "ip proxy-arp"          # not "no no ip proxy-arp"
+    assert " no shutdown" in lines                        # baseline's own line, untouched
+    # the baseline's own " no shutdown" line is never the one flagged
+    assert lines.index(" no shutdown") not in removal_indices
+
+
+def test_device_missing_a_baseline_no_line_reconciles_via_its_own_inverse():
+    """The device is admin-down (`shutdown` in its live config) where the
+    baseline expects it up (`no shutdown`). Reconciling that extra `shutdown`
+    child means sending `no shutdown` to turn it back on -- and that
+    synthesized line must be distinguishable from the baseline's own (later,
+    redundant-but-harmless) `no shutdown` line by origin, not by text, since
+    both end up being the literal string `no shutdown` / ` no shutdown`."""
+    baseline = (
+        "interface GigabitEthernet0/0/1\n"
+        " description LAN-SEGMENT-A\n"
+        " no shutdown\n"
+    )
+    live = (
+        "interface GigabitEthernet0/0/1\n"
+        " description LAN-SEGMENT-A\n"
+        " shutdown\n"
+    )
+
+    lines, removal_indices = _build_config_lines(baseline, live)
+    assert len(removal_indices) == 1
+    removal_idx = next(iter(removal_indices))
+    assert lines[removal_idx] == "no shutdown"            # synthesized: turn it back on
+    # the baseline's own " no shutdown" (with leading space) is a separate,
+    # unflagged line further down -- not the same list entry as the removal
+    baseline_no_shutdown_idx = lines.index(" no shutdown")
+    assert baseline_no_shutdown_idx not in removal_indices
+    assert baseline_no_shutdown_idx != removal_idx
 
 
 def test_whole_extra_block_on_device_is_not_auto_removed(tmp_path):
