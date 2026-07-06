@@ -3,12 +3,14 @@
     backup   Pull running-configs from all devices and commit them to git.
     diff     Compare current backups against the per-device baseline (drift check).
     report   Pull, drift-check, and emit a structured JSON summary of the run.
-    promote  Bless a device's current backup as its new baseline (human-gated).
+    promote      Bless a device's current backup as its new baseline (human-gated).
+    push         Push a device's baseline TO the device (human-gated, two confirms).
+    set-baseline Author a device's baseline from a file, no live pull needed (ZTP).
 
 Rendering lives entirely in this module — every function it calls into
-(collector, drift, report, promote, gitstore) returns plain data and never
-prints. Swapping the renderer (plain print -> rich) never touches that data,
-which is also what a later MCP/AI layer reads unchanged.
+(collector, drift, report, promote, push, set_baseline, gitstore) returns plain
+data and never prints. Swapping the renderer (plain print -> rich) never touches
+that data, which is also what a later MCP/AI layer reads unchanged.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from .gitstore import GitIdentityError
 from .inventory import load_config
 
 console = Console()
@@ -51,6 +54,24 @@ def _render_diff(lines: list[str]) -> Text:
         else:
             style = None
         text.append(line + "\n", style=style)
+    return text
+
+
+def _render_push_commands(lines: list[str], removal_indices: set[int]) -> Text:
+    """Render the exact commands `push` is about to send, in order.
+
+    removal_indices marks lines push *synthesized* to reconcile a child the
+    device has that the baseline doesn't (see push._build_config_lines) --
+    not just any line that happens to start with `no`. The baseline itself
+    legitimately has plenty of those (`no ip domain lookup`, `no shutdown`),
+    and those must render as ordinary lines, not flagged removals.
+    """
+    text = Text()
+    for i, line in enumerate(lines):
+        is_removal = i in removal_indices
+        style = "red" if is_removal else "green"
+        prefix = "- " if is_removal else "+ "
+        text.append(prefix + line.strip() + "\n", style=style)
     return text
 
 
@@ -349,10 +370,18 @@ def _ensure_config_file(config_path: Path) -> None:
     _run_config_wizard(config_path)
 
 
-def _cmd_backup(cfg) -> int:
+def _cmd_backup(cfg, device_name: str | None = None) -> int:
     from . import collector, gitstore
 
-    results = collector.collect_all(cfg.devices)
+    devices = cfg.devices
+    if device_name is not None:
+        device = _find_device(cfg, device_name)
+        if device is None:
+            console.print(f"[red]no device named[/red] {device_name} in config.yaml")
+            return 2
+        devices = [device]
+
+    results = collector.collect_all(devices)
     table = Table(title="Backup")
     table.add_column("Device")
     table.add_column("Status")
@@ -406,6 +435,14 @@ def _cmd_diff(cfg) -> int:
     console.print(table)
     for name, lines in diffs.items():
         console.print(Panel(_render_diff(lines), title=name, border_style="yellow"))
+    if diffs:
+        # Only a suggestion, never auto-run: push is a live device write and stays
+        # human-initiated, same as promote -- diff just points at the next command.
+        console.print(
+            "[dim]To reconcile: "
+            + ", ".join(f"`config-audit push {name}`" for name in diffs)
+            + "[/dim]"
+        )
     if no_baseline:
         console.print(
             Panel(
@@ -509,6 +546,127 @@ def _cmd_promote(cfg, device_name: str) -> int:
     return 0
 
 
+def _cmd_set_baseline(cfg, device_name: str, source_path: str) -> int:
+    """Human-gated: author a device's baseline from a config file, with no live
+    device pull first -- the ZTP path. File-only, same risk class as promote/diff;
+    never touches a device, so no secrets/live gear needed.
+    """
+    from . import gitstore, promote, set_baseline
+
+    source = Path(source_path)
+    if not source.exists():
+        console.print(f"[red]no such file:[/red] {source}")
+        return 2
+
+    plan = set_baseline.plan_set_baseline(device_name, source, cfg.settings.baseline_dir)
+
+    if plan.is_initial:
+        console.print(f"{device_name}: no baseline yet — this establishes it from {source}.")
+    elif not plan.has_drift:
+        console.print(
+            f"[green]{device_name}[/green]: baseline already matches {source} — nothing to do."
+        )
+        return 0
+    else:
+        console.print(f"{device_name}: {source} differs from the current baseline —")
+
+    console.print(_render_diff(plan.diff_lines))
+
+    verb = "Establish baseline" if plan.is_initial else "Overwrite the baseline"
+    resp = input(f"\n{verb} for {device_name} from {source}? [y/N] ").strip().lower()
+    if resp not in ("y", "yes"):
+        console.print("[dim]aborted — baseline unchanged.[/dim]")
+        return 1
+
+    path = promote.apply_promotion(device_name, plan.source_text, cfg.settings.baseline_dir)
+    committed = gitstore.commit_changes(
+        cfg.settings.baseline_dir, message=f"Set baseline (authored) — {device_name}"
+    )
+    console.print(f"[green]baseline updated:[/green] {path}")
+    console.print("committed" if committed else "written (git reported no change)")
+    return 0
+
+
+def _find_device(cfg, device_name: str):
+    for device in cfg.devices:
+        if device.name == device_name:
+            return device
+    return None
+
+
+def _cmd_push(cfg, device_name: str) -> int:
+    """Human-gated: push a device's baseline onto the device itself.
+
+    Two separate confirms, deliberately -- push (reversible with a reload) and
+    save (not reversible) are different amounts of risk and get different gates.
+    No `--yes`/auto-approve for either, matching promote's rule (D6).
+    """
+    from . import collector, drift, push
+
+    device = _find_device(cfg, device_name)
+    if device is None:
+        console.print(f"[red]no device named[/red] {device_name} in config.yaml")
+        return 2
+
+    live = collector.fetch_running_config(device)
+    if not live.ok:
+        console.print(f"[red]couldn't reach {device_name}:[/red] {live.error}")
+        return 2
+
+    plan = push.plan_push(device_name, cfg.settings.baseline_dir, live.config_text)
+
+    if not plan.baseline_exists:
+        console.print(
+            f"[cyan]no baseline yet[/cyan] for {device_name} — nothing to push. "
+            f"Run `config-audit promote {device_name}` first to establish one."
+        )
+        return 2
+
+    if plan.no_changes:
+        console.print(f"[green]{device_name}[/green]: already matches baseline — nothing to push.")
+        return 0
+
+    console.print(f"{device_name}: live config differs from baseline —")
+    console.print(_render_diff(plan.diff_lines))
+
+    if plan.removal_indices:
+        console.print(
+            f"\n[yellow]{len(plan.removal_indices)} line(s) will be explicitly "
+            f"removed[/yellow] from {device_name} (device has these, baseline doesn't):"
+        )
+    console.print("\nExact commands to be sent:")
+    console.print(_render_push_commands(plan.config_lines, plan.removal_indices))
+
+    resp = input(f"Push baseline to {device_name}? [y/N] ").strip().lower()
+    if resp not in ("y", "yes"):
+        console.print("[dim]aborted — device unchanged.[/dim]")
+        return 1
+
+    post_push_text = push.apply_push(device, plan.config_lines)
+    baseline_text = (Path(cfg.settings.baseline_dir) / f"{device_name}.cfg").read_text(
+        encoding="utf-8"
+    )
+    post_result = drift.compare_to_baseline(device_name, post_push_text, baseline_text)
+    if post_result.has_drift:
+        console.print(
+            "[yellow]pushed, but the device still doesn't fully match the baseline:[/yellow]"
+        )
+        console.print(_render_diff(post_result.diff_lines))
+    else:
+        console.print("[green]pushed — device now matches baseline.[/green]")
+
+    save_resp = input(
+        f"\nSave this config on {device_name} so it survives a reload? [y/N] "
+    ).strip().lower()
+    if save_resp in ("y", "yes"):
+        push.save_running_config(device)
+        console.print("[green]saved.[/green]")
+    else:
+        console.print("[yellow]NOT saved[/yellow] — a reload will revert this push.")
+
+    return 1 if post_result.has_drift else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="config-audit",
@@ -519,13 +677,27 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to config.yaml (default: config/config.yaml)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("backup", help="Pull running-configs and commit to git.")
+    p_backup = sub.add_parser("backup", help="Pull running-configs and commit to git.")
+    p_backup.add_argument(
+        "device", nargs="?", default=None,
+        help="Only back up this device (default: all devices in config.yaml).",
+    )
     sub.add_parser("diff", help="Drift check: backups vs. per-device baseline.")
     sub.add_parser("report", help="Emit a JSON summary of the latest run.")
     p_promote = sub.add_parser(
         "promote", help="Promote a device's current backup to its baseline (human-gated)."
     )
     p_promote.add_argument("device", help="Device name (must match a name in config.yaml).")
+    p_push = sub.add_parser(
+        "push", help="Push a device's baseline to the device (human-gated, two confirms)."
+    )
+    p_push.add_argument("device", help="Device name (must match a name in config.yaml).")
+    p_set_baseline = sub.add_parser(
+        "set-baseline",
+        help="Author a device's baseline from a config file, no live pull needed (ZTP).",
+    )
+    p_set_baseline.add_argument("device", help="Device name (must match a name in config.yaml).")
+    p_set_baseline.add_argument("file", help="Path to the config file/template to use.")
     sub.add_parser("configure", help="Interactively create or replace config.yaml.")
 
     args = parser.parse_args(argv)
@@ -541,16 +713,26 @@ def main(argv: list[str] | None = None) -> int:
 
     _ensure_config_file(Path(args.config))
 
-    if args.command in ("backup", "report"):
+    if args.command in ("backup", "report", "push"):
         _ensure_secrets_file(Path("secrets.env"))
 
     cfg = load_config(args.config)
 
-    if args.command == "promote":
-        return _cmd_promote(cfg, args.device)
+    try:
+        if args.command == "promote":
+            return _cmd_promote(cfg, args.device)
+        if args.command == "push":
+            return _cmd_push(cfg, args.device)
+        if args.command == "set-baseline":
+            return _cmd_set_baseline(cfg, args.device, args.file)
+        if args.command == "backup":
+            return _cmd_backup(cfg, args.device)
 
-    dispatch = {"backup": _cmd_backup, "diff": _cmd_diff, "report": _cmd_report}
-    return dispatch[args.command](cfg)
+        dispatch = {"diff": _cmd_diff, "report": _cmd_report}
+        return dispatch[args.command](cfg)
+    except GitIdentityError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 2
 
 
 if __name__ == "__main__":
