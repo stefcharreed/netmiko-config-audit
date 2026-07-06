@@ -51,3 +51,57 @@ def test_drifted_live_produces_config_lines_and_diff(tmp_path):
     assert plan.config_lines  # non-empty: this is what would be sent
     # no blank lines -- send_config_set doesn't need them and they add noise
     assert all(line.strip() for line in plan.config_lines)
+
+
+def test_changed_child_line_gets_explicit_no_before_the_new_value(tmp_path):
+    """ISR1_current_drift.cfg has `description LAN-SEGMENT-A-PRINTERS` on Gi0/0/1
+    where the baseline has `description LAN-SEGMENT-A` -- same parent on both
+    sides, differing child. The stale value must be explicitly removed (`no
+    description LAN-SEGMENT-A-PRINTERS`) before the baseline's own `description
+    LAN-SEGMENT-A` is sent, not just left for the device to reconcile itself."""
+    baseline = _baseline_dir(tmp_path)
+    (baseline / "ISR1.cfg").write_text(_fx("ISR1_baseline.cfg"), encoding="utf-8")
+    plan = plan_push("ISR1", baseline, live_config=_fx("ISR1_current_drift.cfg"))
+
+    lines = plan.config_lines
+    parent_idx = lines.index("interface GigabitEthernet0/0/1")
+    no_idx = lines.index("no description LAN-SEGMENT-A-PRINTERS")
+    new_idx = lines.index(" description LAN-SEGMENT-A")
+    assert parent_idx < no_idx < new_idx
+
+
+def test_extra_acl_line_on_device_gets_explicit_no(tmp_path):
+    """The ACL MGMT-IN on the live device has an extra permit line the baseline
+    doesn't -- ACLs are additive by nature (a bare resend doesn't remove a
+    stale entry), so this is the case the feature exists for."""
+    baseline = _baseline_dir(tmp_path)
+    (baseline / "ISR1.cfg").write_text(_fx("ISR1_baseline.cfg"), encoding="utf-8")
+    plan = plan_push("ISR1", baseline, live_config=_fx("ISR1_current_drift.cfg"))
+
+    lines = plan.config_lines
+    parent_idx = lines.index("ip access-list extended MGMT-IN")
+    no_idx = lines.index("no permit tcp host 198.51.100.51 any eq 443")
+    assert parent_idx < no_idx
+
+
+def test_whole_extra_block_on_device_is_not_auto_removed(tmp_path):
+    """A whole parent block the device has that the baseline never mentions at
+    all (a stray extra interface, here) stays a human decision -- deleting a
+    whole block is a different risk class than fixing up one child line, so
+    it must never show up as an auto-generated removal."""
+    baseline_text = _fx("ISR1_baseline.cfg")
+    baseline = _baseline_dir(tmp_path)
+    (baseline / "ISR1.cfg").write_text(baseline_text, encoding="utf-8")
+
+    live_config = baseline_text.replace(
+        "end\n",
+        "interface GigabitEthernet0/0/2\n"
+        " description ROGUE-UNMANAGED-PORT\n"
+        " shutdown\n"
+        "end\n",
+    )
+    plan = plan_push("ISR1", baseline, live_config=live_config)
+
+    assert "interface GigabitEthernet0/0/2" not in plan.config_lines
+    assert not any("ROGUE-UNMANAGED-PORT" in line for line in plan.config_lines)
+    assert not any(line.startswith("no interface") for line in plan.config_lines)
