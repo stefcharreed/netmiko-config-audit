@@ -370,10 +370,18 @@ def _ensure_config_file(config_path: Path) -> None:
     _run_config_wizard(config_path)
 
 
-def _cmd_backup(cfg) -> int:
+def _cmd_backup(cfg, device_name: str | None = None) -> int:
     from . import collector, gitstore
 
-    results = collector.collect_all(cfg.devices)
+    devices = cfg.devices
+    if device_name is not None:
+        device = _find_device(cfg, device_name)
+        if device is None:
+            console.print(f"[red]no device named[/red] {device_name} in config.yaml")
+            return 2
+        devices = [device]
+
+    results = collector.collect_all(devices)
     table = Table(title="Backup")
     table.add_column("Device")
     table.add_column("Status")
@@ -669,7 +677,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to config.yaml (default: config/config.yaml)",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("backup", help="Pull running-configs and commit to git.")
+    p_backup = sub.add_parser("backup", help="Pull running-configs and commit to git.")
+    p_backup.add_argument(
+        "device", nargs="?", default=None,
+        help="Only back up this device (default: all devices in config.yaml).",
+    )
     sub.add_parser("diff", help="Drift check: backups vs. per-device baseline.")
     sub.add_parser("report", help="Emit a JSON summary of the latest run.")
     p_promote = sub.add_parser(
@@ -713,8 +725,10 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_push(cfg, args.device)
         if args.command == "set-baseline":
             return _cmd_set_baseline(cfg, args.device, args.file)
+        if args.command == "backup":
+            return _cmd_backup(cfg, args.device)
 
-        dispatch = {"backup": _cmd_backup, "diff": _cmd_diff, "report": _cmd_report}
+        dispatch = {"diff": _cmd_diff, "report": _cmd_report}
         return dispatch[args.command](cfg)
     except GitIdentityError as exc:
         console.print(f"[red]{exc}[/red]")
