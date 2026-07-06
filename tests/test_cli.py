@@ -268,7 +268,11 @@ def test_set_baseline_matching_existing_is_nothing_to_do(tmp_path, capsys):
 
     code = main(["-c", str(config), "set-baseline", "ISR1", str(template)])
     assert code == 0
-    assert "nothing to do" in capsys.readouterr().out.lower()
+    # Rich word-wraps the long fixture path in narrow/non-tty terminals (e.g. the
+    # Docker CI runner), which can insert a newline between "nothing" and "to do." --
+    # normalize whitespace before matching so the assertion isn't width-dependent.
+    out = " ".join(capsys.readouterr().out.split())
+    assert "nothing to do" in out.lower()
 
 
 def test_push_no_baseline_is_not_pushed(tmp_path, capsys, monkeypatch):
