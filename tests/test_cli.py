@@ -58,6 +58,102 @@ def test_missing_subcommand_exits_with_code_2(capsys):
     assert exit_info.value.code == 2
 
 
+def _two_device_project(tmp_path: Path) -> Path:
+    """Build a temp project with two devices, both with clean backups/baselines,
+    for testing that `backup <device>` only touches the one named."""
+    backup, baseline, reports = tmp_path / "backups", tmp_path / "baselines", tmp_path / "reports"
+    backup.mkdir()
+    baseline.mkdir()
+    subprocess.run(["git", "init", "-q", str(backup)], check=True)
+    subprocess.run(["git", "-C", str(backup), "config", "user.email", "t@example.test"], check=True)
+    subprocess.run(["git", "-C", str(backup), "config", "user.name", "Test"], check=True)
+    for name in ("ISR1", "ISR2"):
+        (backup / f"{name}.cfg").write_text(
+            (FIXTURES / "ISR1_current_clean.cfg").read_text(), encoding="utf-8"
+        )
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "settings:\n"
+        f"  backup_dir: {backup}\n"
+        f"  baseline_dir: {baseline}\n"
+        f"  report_path: {reports}\n"
+        "devices:\n"
+        "  - name: ISR1\n"
+        "    host: 192.0.2.1\n"
+        "    device_type: cisco_ios\n"
+        "  - name: ISR2\n"
+        "    host: 192.0.2.2\n"
+        "    device_type: cisco_ios\n",
+        encoding="utf-8",
+    )
+    return config
+
+
+def test_backup_with_device_name_only_collects_that_device(tmp_path, capsys, monkeypatch):
+    """`backup ISR2` must only pull/write ISR2 -- ISR1 is untouched, even though
+    it's also in config.yaml."""
+    config = _two_device_project(tmp_path)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    collected_names = []
+
+    def _fake_collect_all(devices, source_texts=None):
+        from config_audit.collector import CollectionResult
+
+        collected_names.extend(d.name for d in devices)
+        return [
+            CollectionResult(device=d.name, ok=True, config_text="hostname X\n")
+            for d in devices
+        ]
+
+    monkeypatch.setattr("config_audit.collector.collect_all", _fake_collect_all)
+
+    code = main(["-c", str(config), "backup", "ISR2"])
+    assert code == 0
+    assert collected_names == ["ISR2"]
+    assert "ISR2" in capsys.readouterr().out
+
+
+def test_backup_with_no_device_name_collects_all_devices(tmp_path, monkeypatch):
+    """Plain `backup` (no device argument) keeps backing up every device --
+    the new argument is additive, not a behavior change for the default path."""
+    config = _two_device_project(tmp_path)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    collected_names = []
+
+    def _fake_collect_all(devices, source_texts=None):
+        from config_audit.collector import CollectionResult
+
+        collected_names.extend(d.name for d in devices)
+        return [
+            CollectionResult(device=d.name, ok=True, config_text="hostname X\n")
+            for d in devices
+        ]
+
+    monkeypatch.setattr("config_audit.collector.collect_all", _fake_collect_all)
+
+    code = main(["-c", str(config), "backup"])
+    assert code == 0
+    assert sorted(collected_names) == ["ISR1", "ISR2"]
+
+
+def test_backup_unknown_device_name_errors(tmp_path, capsys, monkeypatch):
+    """`backup NOPE` for a device not in config.yaml fails clearly instead of
+    silently backing up nothing or crashing."""
+    config = _two_device_project(tmp_path)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    def _boom(*_a, **_k):
+        raise AssertionError("must not attempt to collect for an unknown device")
+
+    monkeypatch.setattr("config_audit.collector.collect_all", _boom)
+
+    code = main(["-c", str(config), "backup", "NOPE"])
+    assert code == 2
+    assert "no device named" in capsys.readouterr().out.lower()
+
+
 def test_diff_in_sync_returns_zero(tmp_path, capsys):
     """When backup matches baseline, diff reports the device ok and exits 0."""
     config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
@@ -70,8 +166,27 @@ def test_diff_detects_drift_returns_one(tmp_path, capsys):
     """A drifted backup makes diff print DRIFT and exit 1."""
     config = _project(tmp_path, backup_fixture="ISR1_current_drift.cfg")
     code = main(["-c", str(config), "diff"])
+    out = capsys.readouterr().out
     assert code == 1
-    assert "DRIFT" in capsys.readouterr().out
+    assert "DRIFT" in out
+
+
+def test_diff_suggests_push_when_drift_found(tmp_path, capsys):
+    """Drift found -- diff points at `push` as the next command, but never runs it."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_drift.cfg")
+    code = main(["-c", str(config), "diff"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "config-audit push ISR1" in out
+
+
+def test_diff_no_drift_does_not_suggest_push(tmp_path, capsys):
+    """No drift -- nothing to reconcile, so no push suggestion is printed."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    code = main(["-c", str(config), "diff"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "config-audit push" not in out
 
 
 def test_diff_no_baseline_is_distinct_from_drift(tmp_path, capsys):
@@ -98,6 +213,239 @@ def test_promote_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, mo
     assert code == 1
     assert "aborted" in capsys.readouterr().out.lower()
     assert baseline_file.read_text(encoding="utf-8") == before  # unchanged
+
+
+def test_set_baseline_missing_file_returns_two(tmp_path, capsys):
+    """A source file that doesn't exist is rejected before any diff/prompt."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    missing = tmp_path / "does-not-exist.cfg"
+
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(missing)])
+    assert code == 2
+    assert "no such file" in capsys.readouterr().out.lower()
+
+
+def test_set_baseline_ztp_establishes_initial_baseline(tmp_path, capsys, monkeypatch):
+    """ZTP path: no baseline yet, author one straight from a template file, no device
+    ever contacted -- confirming writes the file and commits it."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    template = FIXTURES / "ISR1_baseline.cfg"
+    subprocess.run(["git", "init", "-q", str(tmp_path / "baselines")], check=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path / "baselines"), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(tmp_path / "baselines"), "config", "user.name", "Test"], check=True
+    )
+
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "y")
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(template)])
+
+    assert code == 0
+    baseline_file = tmp_path / "baselines" / "ISR1.cfg"
+    assert baseline_file.read_text(encoding="utf-8") == template.read_text(encoding="utf-8")
+    assert "baseline updated" in capsys.readouterr().out.lower()
+
+
+def test_set_baseline_aborts_on_no_and_leaves_baseline_untouched(tmp_path, capsys, monkeypatch):
+    """Answering 'n' exits 1 and does not create/modify the baseline file."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    template = FIXTURES / "ISR1_baseline.cfg"
+
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "n")
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(template)])
+
+    assert code == 1
+    assert "aborted" in capsys.readouterr().out.lower()
+    assert not (tmp_path / "baselines" / "ISR1.cfg").exists()
+
+
+def test_set_baseline_matching_existing_is_nothing_to_do(tmp_path, capsys):
+    """Source file identical to the existing baseline -- no prompt, exits 0."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    template = FIXTURES / "ISR1_baseline.cfg"  # same content _project wrote as the baseline
+
+    code = main(["-c", str(config), "set-baseline", "ISR1", str(template)])
+    assert code == 0
+    # Rich word-wraps the long fixture path in narrow/non-tty terminals (e.g. the
+    # Docker CI runner), which can insert a newline between "nothing" and "to do." --
+    # normalize whitespace before matching so the assertion isn't width-dependent.
+    out = " ".join(capsys.readouterr().out.split())
+    assert "nothing to do" in out.lower()
+
+
+def test_push_no_baseline_is_not_pushed(tmp_path, capsys, monkeypatch):
+    """No baseline yet for the device -- push refuses rather than sending nothing
+    meaningful, and points at `promote` instead."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg", baseline_fixture=None)
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_clean.cfg")
+        ),
+    )
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "no baseline yet" in out.lower()
+    assert "config-audit promote" in out
+
+
+def test_push_no_changes_when_live_matches_baseline(tmp_path, capsys, monkeypatch):
+    """Live config already matches baseline -- nothing to push, no gate shown."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_clean.cfg")
+        ),
+    )
+    monkeypatch.setattr("builtins.input", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("should not prompt when there's nothing to push")
+    ))
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    assert code == 0
+    assert "nothing to push" in capsys.readouterr().out.lower()
+
+
+def test_push_aborts_on_no_at_first_gate(tmp_path, capsys, monkeypatch):
+    """Answering 'n' at the push gate exits 1 and never calls apply_push."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+
+    def _boom(*_a, **_k):
+        raise AssertionError("must not push when the first gate is declined")
+
+    monkeypatch.setattr("config_audit.push.apply_push", _boom)
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "n")
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    assert code == 1
+    assert "aborted" in capsys.readouterr().out.lower()
+
+
+def test_push_shows_exact_commands_and_flags_only_synthesized_removals(
+    tmp_path, capsys, monkeypatch
+):
+    """Before the confirm prompt, push must show the human the literal commands
+    it's about to send -- including any synthesized `no` reconciliation lines,
+    flagged as removals. A baseline line that's legitimately `no ...` on its
+    own (e.g. `no ip domain lookup`) must NOT be flagged as a removal -- only
+    lines push itself generated to undo a stale child on the device."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "n")  # decline, just inspect output
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "Exact commands to be sent" in out
+    # synthesized removal -- must be flagged
+    assert "- no permit tcp host 198.51.100.51 any eq 443" in out
+    assert "will be explicitly" in out
+    # legitimate baseline line that happens to start with `no` -- must render
+    # as an ordinary sent line, not a flagged removal
+    assert "+ no ip domain lookup" in out
+    assert "- no ip domain lookup" not in out
+
+
+def test_push_confirmed_but_save_declined_leaves_device_unsaved(tmp_path, capsys, monkeypatch):
+    """Confirming the push but declining the save gate calls apply_push but not
+    save_running_config -- the two gates are independent."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+    # apply_push "succeeds" and the device now matches baseline post-push.
+    monkeypatch.setattr(
+        "config_audit.push.apply_push",
+        lambda device, config_lines: _fx_text("ISR1_baseline.cfg"),
+    )
+
+    def _boom_save(*_a, **_k):
+        raise AssertionError("must not save when the save gate is declined")
+
+    monkeypatch.setattr("config_audit.push.save_running_config", _boom_save)
+
+    inputs = iter(["y", "n"])  # confirm push, decline save
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "pushed" in out.lower()
+    assert "not saved" in out.lower()
+
+
+def test_push_confirmed_and_saved_calls_save_running_config(tmp_path, capsys, monkeypatch):
+    """Confirming both gates calls apply_push then save_running_config."""
+    config = _project(tmp_path, backup_fixture="ISR1_current_clean.cfg")
+    monkeypatch.setattr("config_audit.cli._ensure_secrets_file", lambda *_a, **_k: None)
+
+    from config_audit.collector import CollectionResult
+
+    monkeypatch.setattr(
+        "config_audit.collector.fetch_running_config",
+        lambda device, source_text=None: CollectionResult(
+            device=device.name, ok=True, config_text=_fx_text("ISR1_current_drift.cfg")
+        ),
+    )
+    monkeypatch.setattr(
+        "config_audit.push.apply_push",
+        lambda device, config_lines: _fx_text("ISR1_baseline.cfg"),
+    )
+    saved = []
+    monkeypatch.setattr(
+        "config_audit.push.save_running_config", lambda device: saved.append(device.name)
+    )
+
+    inputs = iter(["y", "y"])  # confirm push, confirm save
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+
+    code = main(["-c", str(config), "push", "ISR1"])
+    assert code == 0
+    assert saved == ["ISR1"]
+    assert "saved" in capsys.readouterr().out.lower()
+
+
+def _fx_text(name: str) -> str:
+    return (FIXTURES / name).read_text(encoding="utf-8")
 
 
 def test_ensure_secrets_file_leaves_file_untouched_when_declining_reentry(tmp_path, monkeypatch):

@@ -6,7 +6,7 @@ A Python tool that pulls running-configs from Cisco devices over SSH, version-co
 
 > [![tests](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml/badge.svg)](https://github.com/stefcharreed/netmiko-config-audit/actions/workflows/tests.yml)
 
-> **Status:** ✅ v1.1 — feature-complete and validated against real hardware. The full pipeline (collect → normalize → drift → promote → report) is covered by a 108-test suite against sanitized fixtures (plus 4 SDK-gated MCP wiring tests), and has now also been run end-to-end against a physical Cisco device: live SSH pull, an initial baseline established via `promote`, a real config change correctly detected as drift (not phantom drift from formatting noise), and a clean `diff` afterward. See the [Roadmap](#roadmap).
+> **Status:** ✅ v1.1 — feature-complete and validated against real hardware. The full pipeline (collect → normalize → drift → promote → push → report) is covered by a 137-test suite against sanitized fixtures (plus SDK-gated MCP wiring tests), and has now also been run end-to-end against a physical Cisco switch: live SSH pull, an initial baseline established via `promote`, a real config change correctly detected as drift, `push` sending the baseline back to the device — including its mechanical child-line `no`-reconciliation, confirmed reconciling cleanly with no residual diff — with an accurate post-push drift re-check and an independent save confirm. `set-baseline` (the ZTP path) is implemented and unit-tested but not yet run against real gear — see the [Roadmap](#roadmap). See [Troubleshooting](#troubleshooting) for real gotchas hit along the way.
 
 ## Overview
 
@@ -36,6 +36,8 @@ inventory (config.yaml) ──> collector ──> gitstore ──> backup repo (
 | `drift.py`     | Diff current vs. per-device baseline, after normalizing **both** sides |
 | `gitstore.py`  | Write configs into the backup repo and commit them |
 | `promote.py`   | Plan/apply a human-approved promotion of a drifted config into the baseline |
+| `push.py`      | Plan/apply pushing a device's baseline back onto the device itself (human-gated) |
+| `set_baseline.py` | Author a device's baseline from a file, no live pull needed (zero-touch provisioning) |
 | `report.py`    | Emit a structured JSON summary of the run |
 | `sanitize_check.py` | Lint a config for real IPs / hashes / SNMP strings before it's committed |
 
@@ -72,6 +74,8 @@ netmiko-config-audit/
 │   ├── drift.py                 # per-device baseline diff
 │   ├── gitstore.py              # git backend
 │   ├── promote.py               # human-gated baseline promotion (plan / apply)
+│   ├── push.py                  # human-gated push of a baseline onto the device (plan / apply)
+│   ├── set_baseline.py          # author a baseline from a file, no live pull (ZTP)
 │   ├── report.py                # JSON run report
 │   └── sanitize_check.py        # pre-commit config linter
 ├── src/config_audit_mcp/            ← MCP adapter (optional, see below)
@@ -79,9 +83,9 @@ netmiko-config-audit/
 │   ├── server.py                # FastMCP glue (thin — registers the registry)
 │   ├── tools.py                 # pure tool logic; no MCP types; tested without SDK
 │   └── README.md                # MCP tool surface + install/run instructions
-└── tests/                       # 108 tests (pytest); no live gear, no network
-    ├── test_*.py                # Project 1 — 80 tests
-    ├── test_mcp_*.py            # MCP adapter — 28 offline + 4 SDK-gated
+└── tests/                       # 137 tests (pytest); no live gear, no network
+    ├── test_*.py                # Project 1
+    ├── test_mcp_*.py            # MCP adapter — offline + SDK-gated
     └── fixtures/                # sanitized configs (RFC 5737 IPs, fake hosts, zero creds)
 ```
 
@@ -149,8 +153,11 @@ for you.
 ```bash
 config-audit configure  # interactively create/replace config.yaml (see Configuration above)
 config-audit backup     # pull running-configs and commit them to the backup repo
+config-audit backup <DEVICE>        # same, but only pull/commit this one device
 config-audit diff       # drift check: current backups vs. per-device baseline
-config-audit promote <DEVICE>   # review a device's drift, then approve it into the baseline
+config-audit promote <DEVICE>       # review a device's drift, then approve it into the baseline
+config-audit push <DEVICE>          # push a device's baseline back onto the device itself
+config-audit set-baseline <DEVICE> <FILE>   # author a baseline from a file, no live device needed (ZTP)
 config-audit report     # pull, drift-check, and write a JSON run summary
 ```
 
@@ -161,6 +168,16 @@ JSON-serializable data and never prints (see Architecture rules in `CLAUDE.md`) 
 the only place rendering happens, so a future MCP/AI layer reads the same unstyled data.
 
 `promote` shows the exact diff and waits for an interactive `y/N` before it writes — there is **no `--yes` flag, by design.** Promoting a config into the baseline is a human/policy judgment, not something a script should do unattended. Exit codes: `0` promoted or already in sync, `1` drift found but you declined, `2` no backup to promote.
+
+### `push` — send a baseline to the device
+
+`push <DEVICE>` pulls the device's live running-config, diffs it against the baseline, and — on confirmation — sends the baseline to the device over SSH. It uses **two separate confirms**, not one: the first sends the config (still reversible with a reload if you decline the second), the second is a distinct `Save this config ... so it survives a reload?` prompt (`wr mem`). No `--yes` for either, same rule as `promote`.
+
+**Mechanical child-line removes, whole-block removes stay manual.** Cisco IOS config is imperative, not declarative: a bare resend of the baseline doesn't remove something the device has that the baseline doesn't mention — a stale ACL entry, an out-of-band `description` someone typed by hand — that needs an explicit `no <command>`. Inside a parent block that exists on **both** sides (e.g. the same `interface`/`ip access-list`), `push` now computes that automatically: any child line the device has that the baseline doesn't gets `no`'d before the baseline's own children are sent, so a changed `description` or a stray extra ACL `permit` is actually reconciled, not just re-added on top. A **whole extra parent block** the device has that the baseline never mentions at all (a whole extra `interface`, a whole extra ACL) is never auto-removed — deleting an entire block is a different risk class (an ACL might still be referenced elsewhere; IOS won't even let you `no` a physical interface), so that stays a human decision via `promote` or manual cleanup on the device. After a push, the tool re-pulls the device's config and tells you honestly if it still doesn't fully match the baseline, rather than claiming success — a remaining `+` diff line after push usually means exactly this whole-block case, not a failed push. See [Troubleshooting](#troubleshooting).
+
+### `set-baseline` — author a baseline for zero-touch provisioning
+
+`promote`'s lifecycle (`backup` → `diff` → `promote`) assumes a live device already exists to pull from. Zero-touch provisioning is the opposite: the switch is blank/factory-default, and the desired config is authored ahead of time — hand-written, or one shared template reused across several similar switches. `set-baseline <DEVICE> <FILE>` reads that file, diffs it against any existing baseline, and on confirmation writes it in (git-committed, same as `promote`) — no device is ever contacted. `push <DEVICE>` then works exactly as it does today, reading from the baseline that was just authored. To roll the same config out to several similar switches, run `set-baseline` once per device name with the same source file — there's no batch/fleet mode; each device still gets its own human-gated command.
 
 Run nightly via cron on the always-on host:
 
@@ -189,7 +206,7 @@ The `diff` command is entirely file-based and needs no device at all.
 
 ## Testing
 
-108 tests cover the offline pipeline end to end (80 for the tool, 28 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
+137 tests cover the offline pipeline end to end (109 for the tool, 28 for the MCP adapter). They need no live gear, no network, and no Netmiko — the collector's `source_text` seam lets the whole pipeline run against saved configs, so the suite is pure and fast:
 
 ```bash
 pip install -e ".[dev]"          # tool + tests
@@ -214,7 +231,7 @@ drops root, running as a dedicated `appuser`.
 
 ```bash
 docker build -t netmiko-audit .                        # runtime image (default target)
-docker build --target test -t netmiko-audit:test .     # runs the 108-test suite inside the image; build fails on any failure
+docker build --target test -t netmiko-audit:test .     # runs the 137-test suite inside the image; build fails on any failure
 ```
 
 `config.yaml`, `secrets.env`, and the backup/baseline directories are gitignored and
@@ -235,6 +252,38 @@ The third mount's host and container paths should match whatever `backup_dir` /
 CI builds and tests the image on every push/PR (the `docker` job in
 [`tests.yml`](.github/workflows/tests.yml)), in addition to the host-based test matrix
 across Python 3.10–3.12.
+
+## Troubleshooting
+
+Issues hit during real hardware validation, in case they save someone else the same detour:
+
+**`backup`/`promote`/`push` crash with `git commit ... returned non-zero exit status 128`.**
+Your backup/baseline repo has no git identity configured, so `git commit` refuses to run.
+Fix it in that specific repo (not this code repo):
+
+```bash
+git -C /path/to/your/backup-repo config user.email "you@example.com"
+git -C /path/to/your/backup-repo config user.name "Your Name"
+```
+
+or set both globally with `git config --global user.email/user.name` if you want every
+repo on the box to have one. `gitstore.commit_changes()` now detects this specific
+failure and raises a clear message with the exact fix instead of a raw traceback — if
+you're on a version before this was added, you'll see a Python traceback ending in
+`CalledProcessError` instead.
+
+**After `push`, the tool says "pushed, but the device still doesn't fully match the
+baseline" and shows a `+` diff line.** This is not a bug. `push` auto-reconciles child
+lines within a block that exists on both sides (e.g. a changed `description`, a stale
+ACL `permit` — those get an explicit `no` before the baseline's own lines are sent), but
+it never auto-removes a **whole extra block** the device has that the baseline doesn't
+mention at all (Cisco IOS is imperative, not declarative, and deleting a whole block —
+say, a whole extra ACL — is a different risk class than fixing one line inside a block
+both sides agree exists). A `+` line surviving in the post-push diff means exactly that:
+a whole extra block on the device — remove it by hand, or if it should stay, fold it
+into the baseline with `promote`. A `-` line (baseline has it, device doesn't) would mean
+the push genuinely failed to apply something — that's the case worth investigating
+further.
 
 ## Security
 
@@ -266,10 +315,13 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Structured JSON run report
 - [x] Pre-commit config sanitizer (`sanitize_check.py`)
 - [x] Human-gated `promote` (approve a drift into the baseline)
-- [x] 108-test suite: 80 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression) + 28 MCP adapter tests (list_devices, get_drift, get_drift_all, plan_promotion, get_config, promote_baseline, backup_now)
+- [x] 137-test suite: 109 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression, push's mechanical child-line reconciliation + CLI command preview, single-device `backup`) + 28 MCP adapter tests (list_devices, get_drift, get_drift_all, plan_promotion, get_config, promote_baseline, backup_now)
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [x] Validated collector + normalization against physical Cisco gear — live SSH pull, initial baseline via `promote`, real drift correctly detected, clean `diff` after
+- [x] Human-gated `push` (send a device's baseline back to the device), including mechanical child-line `no`-reconciliation (a stale device-only ACL entry or changed `description` is now explicitly reversed, not just re-added on top) — validated end to end against a physical switch, reconciling cleanly with no residual diff; whole-block removal still stays manual by design (documented in [Troubleshooting](#troubleshooting))
+- [x] `config-audit backup <DEVICE>` — back up a single device without touching the rest of the fleet (unit/CLI-tested; not yet run against real gear)
+- [ ] `set-baseline` (author a baseline from a file for zero-touch provisioning) — implemented and unit-tested, but **not yet validated against an actual blank/factory-default switch**
 - [ ] Scheduled nightly run on the always-on host
 - [ ] **Platform stage 2:** syslog event pipeline (actual behavior) — not started, no repo yet
 - [ ] **Platform stage 3:** AI correlation layer — composes this tool's MCP server with a CCNP-grounded knowledge base to diagnose real network problems end-to-end. In progress in a private repo, not described here to avoid two copies of the same plan drifting out of sync — [message me on LinkedIn](https://www.linkedin.com/in/stefan-c-reed/) if you want to know more.
