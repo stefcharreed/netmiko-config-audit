@@ -5,12 +5,13 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
 `network-platform-docs` repo).
 
 ## Commands
-- Install (tool + tests): `pip install -e ".[dev]"`
+- Install (tool + tests): `pip install -e ".[dev]"` (or `uv pip install -e ".[dev]"`)
 - Install (+ MCP server): `pip install -e ".[mcp,dev]"`
-- Test: `pytest tests/ -q` — expect **108 passing**; the 4 `test_mcp_server.py` tests
-  skip unless the `mcp` SDK is installed (`.[mcp]`), in which case all 112 run.
+- Test: `pytest tests/ -q` — expect **137 passing, 1 skipped**; the skipped/gated
+  `test_mcp_server.py` tests only run if the `mcp` SDK is installed (`.[mcp]`).
 - Lint: `ruff check .` (config in `pyproject.toml`) — run before committing.
-- CLI: `config-audit backup | diff | promote <DEVICE> | report | configure`
+- CLI: `config-audit backup [DEVICE] | diff | promote <DEVICE> | push <DEVICE> |
+  set-baseline <DEVICE> <FILE> | report | configure`
 - MCP server: `CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp`
 - Docker runtime image: `docker build -t netmiko-audit .`
 - Docker test stage (runs the real suite inside the image): `docker build --target test -t netmiko-audit:test .`
@@ -143,6 +144,29 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   requires `confirm=True`. Do not add an auto-approve path.
 - **git history is the timeline.** One file per device, overwritten each run;
   `git log <device>.cfg` is the change log. No timestamped filenames.
+- **`push` reconciles mechanically, not by full-block deletion.** `push._build_config_lines`
+  groups both baseline and live config into `(parent, children)` blocks (IOS's own
+  one-level indent convention). Within a parent block present on BOTH sides, a child
+  line the device has that the baseline doesn't gets inverted into an explicit `no`
+  line (dropping/adding the `no` prefix as needed — never `no no X`) before the
+  baseline's own children are sent. A whole extra parent block the device has that
+  the baseline never mentions at all is **never** auto-removed — that's a different
+  risk class (an ACL might still be referenced elsewhere; IOS won't let you `no` a
+  physical interface) and stays a human decision via `promote`/manual cleanup. Do not
+  extend this to auto-remove whole blocks without discussing the risk boundary first.
+- **`removal_indices` on `PushPlan` tracks synthesized removals by position, never by
+  pattern-matching the text.** A baseline can legitimately contain its own `no ...`
+  lines (`no shutdown`, `no ip domain lookup`) — those must never be flagged as
+  removals in the CLI preview. Confirmed by direct testing that a synthesized removal
+  can produce the exact same literal string as an unrelated legitimate baseline line
+  elsewhere in the same block (e.g. reconciling a device stuck in `shutdown` produces
+  `no shutdown`, identical text to the baseline's own `no shutdown` line) — if you
+  ever touch this, keep tracking by index/origin, not by re-deriving "is this a
+  removal" from the string itself.
+- **The push confirm gate shows the exact commands about to be sent** (`cli._cmd_push`
+  calls `_render_push_commands` before the y/N prompt), not just the baseline/live
+  diff. This was added specifically so a human reviewing a push can see synthesized
+  `no` removals before approving them, not just after they've already run.
 - **`backup_now` (MCP) is registered now that P1's hardware validation is done** —
   it was deliberately held back until then (see `config_audit_mcp/registry.py`'s
   git history for the reasoning: wiring an unvalidated live SSH path into an agent
@@ -171,6 +195,15 @@ keep it honest, clean, and free of planning/strategy (that lives in the private
   (the `golden_dir`/`baseline_dir` mismatch, the git commit-scoping bug, the
   no-baseline-vs-drift confusion) precisely because they can't exercise things
   fixtures don't model.
+- **`push` (including the mechanical child-line reconciliation) is validated against
+  real hardware** — live switch, out-of-band changes correctly detected as drift,
+  push reconciled cleanly (`pushed — device now matches baseline`, no residual diff).
+- **`set-baseline` (the ZTP path) is NOT yet validated against real hardware.** It has
+  unit/CLI test coverage only. Do not describe it as hardware-validated until it's
+  actually been run against a real blank/factory-default switch — see the Roadmap.
+- **`backup <DEVICE>` (single-device backup) is NOT yet validated against real
+  hardware either** — unit/CLI-tested only, added after this project's last
+  hardware pass.
 - **The Docker image needs `git` on PATH** (base stage installs it via apt) — `gitstore.py`
   shells out to `git` for every commit, so a base image without it builds fine but fails
   the moment `backup`/`promote` actually runs. This bit us once already; if the base image
