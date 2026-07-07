@@ -15,7 +15,7 @@ def _fx(name: str) -> str:
 
 def _has(diff_lines, sign: str, needle: str) -> bool:
     """True if some diff line starts with sign (+/-) and contains needle."""
-    return any(l.startswith(sign) and needle in l for l in diff_lines)
+    return any(ln.startswith(sign) and needle in ln for ln in diff_lines)
 
 
 def test_noise_only_is_not_drift_isr():

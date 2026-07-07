@@ -14,8 +14,8 @@ import pytest
 
 pytest.importorskip("mcp")  # FastMCP SDK; required for these wiring checks
 
-from config_audit_mcp import server                      # noqa: E402  (after importorskip)
-from config_audit_mcp.registry import REGISTRY           # noqa: E402
+from config_audit_mcp import server  # noqa: E402  (after importorskip)
+from config_audit_mcp.registry import REGISTRY  # noqa: E402
 
 
 def _list_tools():

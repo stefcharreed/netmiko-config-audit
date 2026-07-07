@@ -3,7 +3,6 @@ will read. These tests pin the tally and confirm the written file is valid JSON,
 since anything downstream depends on that schema staying stable.
 """
 import json
-from pathlib import Path
 
 from config_audit.collector import CollectionResult
 from config_audit.drift import DriftResult

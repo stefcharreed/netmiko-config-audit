@@ -18,7 +18,8 @@ ISR1_BASE = (
 )
 ISR1_DRIFT = (
     "hostname ISR1\n"
-    "interface GigabitEthernet0/0\n description LAN-A-PRINTERS\n ip address 192.0.2.1 255.255.255.0\n"
+    "interface GigabitEthernet0/0\n description LAN-A-PRINTERS\n"
+    " ip address 192.0.2.1 255.255.255.0\n"
 )
 CAT1_BASE = "hostname CAT1\ninterface GigabitEthernet1/0/2\n switchport access vlan 10\n"
 CAT1_DRIFT = "hostname CAT1\ninterface GigabitEthernet1/0/2\n switchport access vlan 20\n"
@@ -37,9 +38,12 @@ def _platform(tmp_path: Path, monkeypatch, devices: dict):
     handlers resolve it from the environment just like the real server.
     """
     backup_dir, baseline_dir = tmp_path / "backups", tmp_path / "baselines"
-    backup_dir.mkdir(); baseline_dir.mkdir()
+    backup_dir.mkdir()
+    baseline_dir.mkdir()
     subprocess.run(["git", "init", "-q", str(baseline_dir)], check=True)
-    subprocess.run(["git", "-C", str(baseline_dir), "config", "user.email", "t@example.test"], check=True)
+    subprocess.run(
+        ["git", "-C", str(baseline_dir), "config", "user.email", "t@example.test"], check=True
+    )
     subprocess.run(["git", "-C", str(baseline_dir), "config", "user.name", "Test"], check=True)
 
     lines = [
@@ -65,7 +69,9 @@ def _platform(tmp_path: Path, monkeypatch, devices: dict):
 
 def test_can_list_the_managed_inventory(tmp_path, monkeypatch):
     """An operator can ask the server which devices it manages."""
-    _platform(tmp_path, monkeypatch, {"ISR1": (ISR1_BASE, ISR1_BASE), "CAT1": (CAT1_BASE, CAT1_BASE)})
+    _platform(
+        tmp_path, monkeypatch, {"ISR1": (ISR1_BASE, ISR1_BASE), "CAT1": (CAT1_BASE, CAT1_BASE)}
+    )
     devices = _tool("list_devices")()
     assert {d["device"] for d in devices} == {"ISR1", "CAT1"}
 
@@ -75,8 +81,8 @@ def test_can_answer_did_this_device_change_when_it_did(tmp_path, monkeypatch):
     _platform(tmp_path, monkeypatch, {"ISR1": (ISR1_DRIFT, ISR1_BASE)})
     result = _tool("get_drift")("ISR1")
     assert result["in_sync"] is False
-    assert any("description LAN-A-PRINTERS" in l for l in result["added"])
-    assert any("description LAN-A" in l for l in result["removed"])
+    assert any("description LAN-A-PRINTERS" in ln for ln in result["added"])
+    assert any("description LAN-A" in ln for ln in result["removed"])
 
 
 def test_can_answer_did_this_device_change_when_it_did_not(tmp_path, monkeypatch):

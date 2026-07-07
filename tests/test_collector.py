@@ -2,7 +2,7 @@
 lets the whole pipeline be tested with no device. These tests exercise only that
 seam — the live Netmiko path needs real gear and is validated by hand.
 """
-from config_audit.collector import fetch_running_config, collect_all
+from config_audit.collector import collect_all, fetch_running_config
 from config_audit.inventory import Device
 
 

@@ -20,8 +20,6 @@ that needs real gear.
 from __future__ import annotations
 
 import os
-from dataclasses import asdict
-from pathlib import Path
 
 from config_audit import drift, gitstore, promote
 from config_audit.inventory import Config, load_config
@@ -56,10 +54,10 @@ def _split_diff(diff_lines: list[str]) -> dict:
     Reconciles the as-built DriftResult (device/has_drift/diff_lines) with the
     richer contract the platform docs describe (in_sync/added/removed/diff).
     """
-    added = [l[1:].strip() for l in diff_lines
-             if l.startswith("+") and not l.startswith("+++")]
-    removed = [l[1:].strip() for l in diff_lines
-               if l.startswith("-") and not l.startswith("---")]
+    added = [ln[1:].strip() for ln in diff_lines
+             if ln.startswith("+") and not ln.startswith("+++")]
+    removed = [ln[1:].strip() for ln in diff_lines
+               if ln.startswith("-") and not ln.startswith("---")]
     return {"added": added, "removed": removed}
 
 
