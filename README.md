@@ -19,6 +19,8 @@ Networks drift. Someone makes a "temporary" change at 2 a.m., a config gets fat-
 It runs unattended (cron on an always-on host) and emits structured (JSON) output so the results can feed downstream tooling.
 
 > This is **Project 1** of a larger self-hosted NetDevOps platform. It is built standalone, but with deliberate seams — structured output, a git backend, modular functions, and an MCP adapter — so it can later compose with a syslog event pipeline (stage 2) and an AI correlation layer (stage 3, in progress in a private repo — [message me on LinkedIn](https://www.linkedin.com/in/stefan-c-reed/) if you want to know more).
+>
+> The same architecture is also being ported to Palo Alto firewalls in [paloalto-config-audit](https://github.com/stefcharreed/paloalto-config-audit) — security-policy drift via the PAN-OS/Panorama API instead of IOS over SSH. That repo's [COMPARISON.md](https://github.com/stefcharreed/paloalto-config-audit/blob/main/COMPARISON.md) holds both projects to the same bar and documents what transferred, what's still open there, and one finding it surfaced *here* (ruff had drifted unenforced — fixed, and now a CI gate).
 
 ## How it works
 
@@ -317,6 +319,7 @@ See `src/config_audit_mcp/README.md` for the tool surface and design.
 - [x] Human-gated `promote` (approve a drift into the baseline)
 - [x] 137-test suite: 109 tool tests (phantom-drift guard, drift detection, promote gate, sanitizer, secrets wizard + confirmation + validation + re-entry, config wizard with git/repo-boundary validation + repo-root-first subdirectory flow, no-baseline vs. real-drift distinction, git commit scoping regression, push's mechanical child-line reconciliation + CLI command preview, single-device `backup`) + 28 MCP adapter tests (list_devices, get_drift, get_drift_all, plan_promotion, get_config, promote_baseline, backup_now)
 - [x] Containerized: multi-stage `Dockerfile` (test stage runs the real suite inside the image; runtime stage drops root), wired into CI
+- [x] Lint enforced: ruff runs as its own CI job (added 2026-07-07 after a same-bar comparison against `paloalto-config-audit` found the config had drifted to 27 unenforced violations — all fixed)
 - [x] Terminal UX: `rich`-rendered tables/colored diffs, interactive first-run secrets setup for `backup`/`report` — presentation only, no change to the underlying JSON-serializable data
 - [x] Validated collector + normalization against physical Cisco gear — live SSH pull, initial baseline via `promote`, real drift correctly detected, clean `diff` after
 - [x] Human-gated `push` (send a device's baseline back to the device), including mechanical child-line `no`-reconciliation (a stale device-only ACL entry or changed `description` is now explicitly reversed, not just re-added on top) — validated end to end against a physical switch, reconciling cleanly with no residual diff; whole-block removal still stays manual by design (documented in [Troubleshooting](#troubleshooting))
