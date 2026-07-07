@@ -4,7 +4,7 @@ gear and no stdin, because the human gate and rendering live in the CLI.
 """
 from pathlib import Path
 
-from config_audit.promote import plan_promotion, apply_promotion
+from config_audit.promote import apply_promotion, plan_promotion
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -16,7 +16,8 @@ def _fx(name: str) -> str:
 def _dirs(tmp_path: Path):
     """Create backup + baseline dirs inside the test's temp dir."""
     backup, baseline = tmp_path / "backups", tmp_path / "baselines"
-    backup.mkdir(); baseline.mkdir()
+    backup.mkdir()
+    baseline.mkdir()
     return backup, baseline
 
 

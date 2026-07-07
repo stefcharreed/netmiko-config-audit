@@ -3,8 +3,8 @@ itself is tested in Project 1. So these tests prove the wrapping is correct:
 credentials are excluded, drift becomes added/removed, unknown devices are
 handled, and the mutating tool refuses without confirm.
 """
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 from config_audit_mcp import tools
 
@@ -31,7 +31,8 @@ def _git_init(path: Path) -> None:
 def _project(tmp_path: Path, *, backup: str, baseline: str | None = BASELINE) -> str:
     """Build a temp project (config.yaml + populated dirs). Returns the config path."""
     backup_dir, baseline_dir = tmp_path / "backups", tmp_path / "baselines"
-    backup_dir.mkdir(); baseline_dir.mkdir()
+    backup_dir.mkdir()
+    baseline_dir.mkdir()
     # Both dirs are their own git repo — promote_baseline commits into baseline_dir,
     # backup_now commits into backup_dir.
     _git_init(backup_dir)
@@ -78,8 +79,8 @@ def test_get_drift_splits_change_into_added_and_removed(tmp_path):
     config = _project(tmp_path, backup=DRIFTED)
     result = tools.get_drift("ISR1", config)
     assert result["in_sync"] is False
-    assert any("description LAN-A-PRINTERS" in l for l in result["added"])
-    assert any("description LAN-A" in l for l in result["removed"])
+    assert any("description LAN-A-PRINTERS" in ln for ln in result["added"])
+    assert any("description LAN-A" in ln for ln in result["removed"])
 
 
 def test_get_drift_unknown_device_is_flagged(tmp_path):

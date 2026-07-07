@@ -505,7 +505,7 @@ def _cmd_promote(cfg, device_name: str) -> int:
     Shows the delta, requires an explicit y/N, then (on yes) overwrites the
     device's baseline and git-commits it. Deterministic, no AI, no device write.
     """
-    from . import promote, gitstore
+    from . import gitstore, promote
 
     plan = promote.plan_promotion(
         device_name, cfg.settings.backup_dir, cfg.settings.baseline_dir

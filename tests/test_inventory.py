@@ -72,7 +72,7 @@ def test_device_missing_required_field_raises_clear_error(tmp_path, monkeypatch)
     bad = "devices:\n  - name: ISR1\n    device_type: cisco_ios\n"   # no host
     try:
         load_config(_write(tmp_path, bad), secrets_path=tmp_path / "none.env")
-        assert False, "expected ValueError"
+        raise AssertionError("expected ValueError")
     except ValueError as exc:
         assert "host" in str(exc)
         assert "ISR1" in str(exc)

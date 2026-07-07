@@ -10,6 +10,21 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    # pyproject.toml carries the ruff config; running it here is what makes that
+    # config true. (It sat unenforced for a while and drifted to 27 violations —
+    # found 2026-07-07 during a same-bar comparison against paloalto-config-audit.)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Ruff
+        run: ruff check src/ tests/
+
   test:
     runs-on: ubuntu-latest
     strategy:

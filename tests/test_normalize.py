@@ -29,8 +29,8 @@ def test_strips_known_volatile_lines():
     joined = "\n".join(out)
     assert "Building configuration" not in joined
     assert "Current configuration" not in joined
-    assert not any(l.startswith("! Last configuration change") for l in out)
-    assert not any(l.startswith("ntp clock-period") for l in out)
+    assert not any(ln.startswith("! Last configuration change") for ln in out)
+    assert not any(ln.startswith("ntp clock-period") for ln in out)
     assert "!" not in out          # bare separators gone
     assert "" not in out           # blank lines gone
     assert "end" not in out        # trailing 'end' gone
@@ -51,7 +51,8 @@ def test_keeps_password_hash_and_order():
     out = normalize(cfg)
     assert "enable secret 9 PLACEHOLDER_NOT_A_REAL_HASH" in out
     assert out.index("hostname X") < out.index("enable secret 9 PLACEHOLDER_NOT_A_REAL_HASH")
-    assert out.index("enable secret 9 PLACEHOLDER_NOT_A_REAL_HASH") < out.index("interface Loopback0")
+    secret_pos = out.index("enable secret 9 PLACEHOLDER_NOT_A_REAL_HASH")
+    assert secret_pos < out.index("interface Loopback0")
 
 
 def test_does_not_sort_lines():

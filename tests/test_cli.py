@@ -22,7 +22,8 @@ def _project(
     the backups dir is populated but baselines/ISR1.cfg is never written.
     """
     backup, baseline, reports = tmp_path / "backups", tmp_path / "baselines", tmp_path / "reports"
-    backup.mkdir(); baseline.mkdir()
+    backup.mkdir()
+    baseline.mkdir()
     (backup / "ISR1.cfg").write_text((FIXTURES / backup_fixture).read_text(), encoding="utf-8")
     if baseline_fixture is not None:
         (baseline / "ISR1.cfg").write_text(
