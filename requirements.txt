@@ -17,4 +17,4 @@ rich==15.0.0
 ruamel.yaml==0.19.1
 scp==0.15.0
 textfsm==2.1.0
-typing_extensions==4.15.0
+typing_extensions==4.16.0
