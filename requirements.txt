@@ -7,7 +7,7 @@ mdurl==0.1.2
 netmiko==4.6.0
 ntc_templates==8.1.0
 paramiko==5.0.0
-pycparser==2.23
+pycparser==3.0
 Pygments==2.20.0
 PyNaCl==1.6.2
 pyserial==3.5
