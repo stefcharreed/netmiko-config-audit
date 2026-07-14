@@ -307,7 +307,10 @@ pip install -e ".[mcp]"
 CONFIG_AUDIT_CONFIG=config/config.yaml config-audit-mcp
 ```
 
-See `src/config_audit_mcp/README.md` for the tool surface and design.
+See `src/config_audit_mcp/README.md` for the tool surface and design. What an LLM
+connected to this server can and cannot cause to happen — and the risk assessment
+behind those limits (read-only default, the `confirm` gate, why config push is
+deliberately not exposed) — is documented in [RESPONSIBLE-AI.md](RESPONSIBLE-AI.md).
 
 ## Roadmap
 
