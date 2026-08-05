@@ -1,6 +1,6 @@
 bcrypt==5.0.0
 cffi==2.0.0
-cryptography==49.0.0
+cryptography==50.0.0
 invoke==3.0.3
 markdown-it-py==3.0.0
 mdurl==0.1.2
