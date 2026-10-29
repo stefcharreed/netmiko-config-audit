@@ -23,7 +23,7 @@ dev = [
 # the server. Pinned below v2 — the official SDK's v2 ships breaking changes
 # (stable 2026-07-27). Install with:  pip install -e ".[mcp]"
 mcp = [
-    "mcp>=1.27,<2",
+    "mcp>=1.27,<3",
 ]
 
 [tool.pytest.ini_options]
